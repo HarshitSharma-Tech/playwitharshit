@@ -303,7 +303,7 @@ export const GameTablePage: React.FC = () => {
       {/* TOP MAHOGANY & BRASS HUD */}
       <header className="z-30 border-b border-[#E6B84C]/20 bg-[#120D0A]/92 backdrop-blur-xl px-3 py-2.5 sm:px-6">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
-          {/* Left: Room Code + Round + Dealer Shoe */}
+          {/* Left: Room Code + Round + Total Cards in Pile */}
           <div className="flex items-center gap-2 sm:gap-2.5">
             <button
               type="button"
@@ -315,21 +315,19 @@ export const GameTablePage: React.FC = () => {
               <Copy className="h-3 w-3 text-[#E6B84C]" />
             </button>
 
-            <div className="rounded-xl bg-[#1C140F] border border-[#E6B84C]/18 px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]">
-              ROUND <strong className="text-[#FAF3E3]">{gameState.roundNumber}</strong>
+            <div className="rounded-xl bg-[#1C140F] border border-[#E6B84C]/18 px-2.5 sm:px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]">
+              R<strong className="text-[#FAF3E3]">{gameState.roundNumber}</strong>
             </div>
 
-            {gameState.remainingDeckCount > 0 && (
-              <div
-                className="hidden md:flex items-center gap-1.5 rounded-xl bg-[#1C140F] border border-[#E6B84C]/18 px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]"
-                title={`${gameState.deckCount} deck mode — ${gameState.remainingDeckCount} undealt cards in shoe`}
-              >
-                <Layers className="h-3.5 w-3.5 text-[#E6B84C]" />
-                <span>
-                  SHOE <strong className="text-[#F6D889]">{gameState.remainingDeckCount}</strong>
-                </span>
-              </div>
-            )}
+            <div
+              className="flex items-center gap-1.5 rounded-xl bg-[#1C140F] border border-[#E6B84C]/25 px-2.5 sm:px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]"
+              title="Total cards currently in the center pile"
+            >
+              <Layers className="h-3.5 w-3.5 text-[#E6B84C]" />
+              <span>
+                PILE <strong className="text-[#F6D889]">{gameState.pileCount}</strong>
+              </span>
+            </div>
 
             {gameState.isSpectator && (
               <span className="inline-flex items-center gap-1 rounded-xl bg-emerald-500/15 border border-emerald-400/40 px-2.5 py-1.5 font-[var(--font-mono)] text-[10px] font-bold text-emerald-300">
@@ -338,11 +336,11 @@ export const GameTablePage: React.FC = () => {
             )}
           </div>
 
-          {/* Center: Golden Brass Dealer Medallion (Round Rank) + Timer */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2.5 rounded-xl bg-gradient-to-r from-[#261B0F] via-[#1C140C] to-[#261B0F] border border-[#E6B84C]/65 px-3.5 py-1.5 shadow-[0_0_24px_rgba(230,184,76,0.2)]">
-              <span className="font-[var(--font-mono)] text-[10px] font-bold uppercase tracking-widest text-[#D8B974]">
-                {isFreshRound ? 'NEW ROUND' : 'ROUND RANK'}
+          {/* Center: Crystal-Clear Active Card Medallion + Timer */}
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#261B0F] via-[#1C140C] to-[#261B0F] border border-[#E6B84C]/65 px-3 py-1.5 shadow-[0_0_24px_rgba(230,184,76,0.2)]">
+              <span className="font-[var(--font-mono)] text-[10px] font-bold uppercase tracking-wider text-[#D8B974]">
+                {isFreshRound ? 'PICK CARD' : 'ACTIVE CARD'}
               </span>
               <span className="flex h-7 min-w-7 items-center justify-center rounded-lg bg-gradient-to-b from-[#F5D582] to-[#C89428] px-2 font-[var(--font-display)] text-sm font-black text-[#140E08] shadow">
                 {isFreshRound ? 'ANY' : gameState.requiredRank}
@@ -553,8 +551,8 @@ export const GameTablePage: React.FC = () => {
                           <PlayingCard faceDown size="sm" />
                         </motion.div>
                       ))}
-                      <div className="absolute -bottom-2.5 z-20 rounded-full bg-[#150E09] border border-[#E6B84C]/70 px-3 py-0.5 font-[var(--font-mono)] text-[11px] font-bold text-[#F6D889] shadow-lg">
-                        {gameState.pileCount} {gameState.pileCount === 1 ? 'CARD' : 'CARDS'}
+                      <div className="absolute -bottom-3 z-20 whitespace-nowrap rounded-full bg-[#150E09] border border-[#E6B84C]/70 px-3 py-0.5 font-[var(--font-mono)] text-[11px] font-bold text-[#F6D889] shadow-lg">
+                        {gameState.pileCount} {gameState.pileCount === 1 ? 'CARD' : 'CARDS'} IN PILE
                       </div>
                     </>
                   )}
@@ -572,10 +570,15 @@ export const GameTablePage: React.FC = () => {
                     >
                       <p className="text-sm sm:text-base font-bold text-[#FAF3E3] drop-shadow">
                         <span className="text-[#F6D889]">{gameState.lastPlay.playerName}</span>{' '}
-                        claims:{' '}
-                        <span className="rounded-lg bg-[#16100B]/90 border border-[#E6B84C]/60 px-2.5 py-0.5 font-[var(--font-mono)] font-bold text-[#FAF3E3]">
+                        threw{' '}
+                        <span className="font-[var(--font-mono)] text-[#FAF3E3]">
+                          {gameState.lastPlay.count} {gameState.lastPlay.count === 1 ? 'card' : 'cards'}
+                        </span>{' '}
+                        (said{' '}
+                        <span className="rounded-lg bg-[#16100B]/90 border border-[#E6B84C]/60 px-2 py-0.5 font-[var(--font-mono)] font-bold text-[#F6D889]">
                           {gameState.lastPlay.count}× {gameState.lastPlay.declaredRank}
                         </span>
+                        )
                       </p>
                       {gameState.pendingWinnerId && (
                         <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-[#3D1218]/95 border border-[#E6B84C] px-3 py-1 font-[var(--font-mono)] text-[11px] font-bold text-[#F6D889]">
@@ -725,7 +728,7 @@ export const GameTablePage: React.FC = () => {
               {canPlayCards && isFreshRound && (
                 <div className="flex flex-col items-center gap-1.5 rounded-2xl bg-[#1A130D] border border-[#E6B84C]/35 px-2.5 py-2 shadow-lg max-w-full">
                   <span className="font-[var(--font-mono)] text-[9px] font-bold uppercase tracking-widest text-[#D8B974]">
-                    DECLARE ANY RANK (DOT = IN YOUR HAND)
+                    WHICH CARD DO YOU WANT TO SAY? (GREEN DOT = YOU HAVE IT)
                   </span>
                   <div className="flex flex-wrap items-center justify-center gap-1">
                     {RANKS.map((r) => {
@@ -873,9 +876,23 @@ export const GameTablePage: React.FC = () => {
             </div>
           </div>
 
+          {/* Player's Hand Header (Total Cards + Selected Count) */}
+          {!gameState.isSpectator && (
+            <div className="mb-1 flex items-center justify-center gap-3 font-[var(--font-mono)] text-[10px] font-bold uppercase tracking-wider">
+              <span className="text-[#C8B9A2]">
+                YOUR HAND: <strong className="text-[#FAF3E3]">{gameState.myHand.length} CARDS</strong>
+              </span>
+              {selectedIds.length > 0 && (
+                <span className="rounded-full bg-[#E6B84C]/20 border border-[#E6B84C]/50 px-2.5 py-0.5 text-[#F6D889]">
+                  SELECTED: {selectedIds.length} → SAYING {selectedIds.length}× {activeClaimRank}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Player's Horizontal Curved Hand Fan */}
           {!gameState.isSpectator && (
-            <div className="relative flex min-h-[136px] sm:min-h-[152px] items-end justify-center overflow-x-auto pb-1 pt-6 sm:px-36">
+            <div className="relative flex min-h-[136px] sm:min-h-[152px] items-end justify-center overflow-x-auto pb-1 pt-5 sm:px-36">
               {gameState.myHand.length === 0 ? (
                 <div className="rounded-2xl border border-[#E6B84C]/25 bg-[#1A1410]/85 px-6 py-4 text-center">
                   <p className="font-[var(--font-display)] text-sm font-bold text-[#F6D889]">
