@@ -327,6 +327,18 @@ io.on('connection', (socket) => {
     }
   );
 
+  socket.on(
+    'voice:relay_audio',
+    (payload: {
+      token: string;
+      sampleRate: number;
+      pcm: ArrayBuffer | Uint8Array;
+      excludeUserIds?: string[];
+    }) => {
+      roomManager.relayVoiceAudio(user.id, payload);
+    }
+  );
+
   socket.on('voice:leave', (_payload: unknown, cb?: (res: unknown) => void) => {
     roomManager.leaveVoiceChannel(user.id);
     cb?.({ ok: true });

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { VoicePeerState } from '@shared/types';
-import { voiceManager } from '../lib/voice';
+import { voiceManager, type VoiceTransportMode } from '../lib/voice';
 
 export type VoiceConnectionStatus =
   | 'idle'
@@ -18,8 +18,8 @@ interface VoiceStoreState {
   speaking: boolean;
   micLevel: number;
   connectedAudioPeers: number;
+  transportMode: VoiceTransportMode;
   autoplayBlocked: boolean;
-  iceFailed: boolean;
   selfTesting: boolean;
   error: string | null;
   peers: VoicePeerState[];
@@ -42,8 +42,8 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     onMicLevel: (micLevel, speaking) => set({ micLevel, speaking }),
     onMicState: (micEnabled, muted) => set({ micEnabled, muted }),
     onConnectedPeers: (connectedAudioPeers) => set({ connectedAudioPeers }),
+    onTransportMode: (transportMode) => set({ transportMode }),
     onAutoplayBlocked: (autoplayBlocked) => set({ autoplayBlocked }),
-    onIceFailure: (iceFailed) => set({ iceFailed }),
   });
 
   return {
@@ -54,16 +54,14 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     speaking: false,
     micLevel: 0,
     connectedAudioPeers: 0,
+    transportMode: 'none',
     autoplayBlocked: false,
-    iceFailed: false,
     selfTesting: false,
     error: null,
     peers: [],
 
     setPeers: (peers, myUserId, roomCode) => {
       set({ peers });
-      // If another player enabled their mic and our speaker is ON, auto-join listen-only
-      // (NEVER asks for microphone permission!) so we immediately hear them!
       const state = get();
       if (
         myUserId &&
@@ -119,8 +117,8 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
         speaking: false,
         micLevel: 0,
         connectedAudioPeers: 0,
+        transportMode: 'none',
         autoplayBlocked: false,
-        iceFailed: false,
         selfTesting: false,
         error: null,
         peers: [],

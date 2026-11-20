@@ -1260,6 +1260,61 @@ export class RoomManager {
     return { ok: true };
   }
 
+  /**
+   * Free zero-config fallback audio relay for peers behind strict 4G/5G or NAT firewalls
+   * where direct WebRTC P2P cannot connect. Strictly room-isolated, token-authenticated,
+   * and NEVER recorded or stored.
+   */
+  public relayVoiceAudio(
+    fromUserId: string,
+    payload: {
+      token: string;
+      sampleRate: number;
+      pcm: ArrayBuffer | Uint8Array | Buffer;
+      excludeUserIds?: string[];
+    }
+  ): void {
+    const code = this.userToRoom.get(fromUserId);
+    if (!code) return;
+    const room = this.rooms.get(code);
+    if (!room || !this.isMemberOfRoom(room, fromUserId)) return;
+    if (!verifyVoiceToken(payload?.token, fromUserId, code)) return;
+    if (!payload.pcm) return;
+
+    // Guard max packet size (~16KB max) to prevent abuse
+    const byteLength =
+      payload.pcm instanceof ArrayBuffer
+        ? payload.pcm.byteLength
+        : Buffer.isBuffer(payload.pcm)
+          ? payload.pcm.byteLength
+          : payload.pcm.byteLength;
+    if (!byteLength || byteLength > 16384) return;
+
+    const excluded = new Set<string>(payload.excludeUserIds ?? []);
+    excluded.add(fromUserId);
+
+    const recipients: string[] = [];
+    for (const p of room.players) {
+      if (!p.isBot && p.connected && !excluded.has(p.id)) {
+        recipients.push(p.id);
+      }
+    }
+    for (const s of room.spectators) {
+      if (s.connected && !excluded.has(s.id)) {
+        recipients.push(s.id);
+      }
+    }
+
+    for (const targetId of recipients) {
+      this.emitToUser(targetId, 'voice:relay_audio', {
+        roomCode: code,
+        fromUserId,
+        sampleRate: payload.sampleRate === 16000 ? 16000 : 16000,
+        pcm: payload.pcm,
+      });
+    }
+  }
+
   public leaveVoiceChannel(userId: string): void {
     const code = this.userToRoom.get(userId);
     if (!code) return;
