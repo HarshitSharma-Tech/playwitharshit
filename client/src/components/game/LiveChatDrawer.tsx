@@ -6,9 +6,27 @@ import { FAMOUS_CHAT_MEMES, type FamousMemeSticker } from '../../lib/hindiMemes'
 import { useGameStore } from '../../store/useGameStore';
 import { AvatarBadge } from '../AvatarBadge';
 
-export const LiveChatDrawer: React.FC = () => {
+interface LiveChatDrawerProps {
+  externalOpen?: boolean;
+  onExternalOpenChange?: (open: boolean) => void;
+  onUnreadChange?: (count: number) => void;
+  hideMobileTrigger?: boolean;
+}
+
+export const LiveChatDrawer: React.FC<LiveChatDrawerProps> = ({
+  externalOpen,
+  onExternalOpenChange,
+  onUnreadChange,
+  hideMobileTrigger = false,
+}) => {
   const { user, chatMessages, sendChatMessage } = useGameStore();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = externalOpen !== undefined ? externalOpen : internalOpen;
+  const setOpen = (next: boolean | ((prev: boolean) => boolean)) => {
+    const resolved = typeof next === 'function' ? next(open) : next;
+    if (onExternalOpenChange) onExternalOpenChange(resolved);
+    else setInternalOpen(resolved);
+  };
   const [tab, setTab] = useState<'chat' | 'memes'>('chat');
   const [text, setText] = useState('');
   const [unread, setUnread] = useState(0);
@@ -35,6 +53,14 @@ export const LiveChatDrawer: React.FC = () => {
     }
     prevCountRef.current = chatMessages.length;
   }, [chatMessages, open]);
+
+  useEffect(() => {
+    onUnreadChange?.(unread);
+  }, [unread, onUnreadChange]);
+
+  useEffect(() => {
+    if (open) setUnread(0);
+  }, [open]);
 
   useEffect(() => {
     return () => {
@@ -92,7 +118,13 @@ export const LiveChatDrawer: React.FC = () => {
   if (!user) return null;
 
   return (
-    <div className="fixed bottom-3 left-3 z-30 flex flex-col items-start gap-2">
+    <div
+      className={`fixed z-40 flex flex-col gap-2 ${
+        hideMobileTrigger
+          ? 'top-14 left-3 right-3 items-center md:top-auto md:right-auto md:bottom-3 md:left-3 md:items-start pointer-events-none'
+          : 'bottom-3 left-3 items-start'
+      }`}
+    >
       {/* LIVE FLOATING CHAT POPOUT (Displayed OUTSIDE chat drawer so everyone sees who sent it!) */}
       <AnimatePresence>
         {!open && floatingPreview && (
@@ -101,7 +133,7 @@ export const LiveChatDrawer: React.FC = () => {
             initial={{ opacity: 0, y: 14, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.94 }}
-            className="glass-panel w-[calc(100vw-24px)] max-w-[310px] overflow-hidden rounded-2xl border border-[#E6B84C]/55 p-3 shadow-2xl"
+            className="pointer-events-auto glass-panel w-full max-w-[310px] overflow-hidden rounded-2xl border border-[#E6B84C]/55 p-3 shadow-2xl"
           >
             <div className="flex items-center justify-between gap-2 border-b border-[#E6B84C]/18 pb-1.5">
               <div className="flex items-center gap-1.5 min-w-0">
@@ -159,7 +191,7 @@ export const LiveChatDrawer: React.FC = () => {
             initial={{ opacity: 0, y: 16, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.95 }}
-            className="glass-panel flex h-[62dvh] max-h-[450px] w-[calc(100vw-24px)] max-w-[360px] flex-col overflow-hidden rounded-2xl border border-[#E6B84C]/45 shadow-2xl"
+            className="pointer-events-auto glass-panel flex h-[62dvh] max-h-[450px] w-[calc(100vw-24px)] max-w-[360px] flex-col overflow-hidden rounded-2xl border border-[#E6B84C]/45 shadow-2xl"
           >
             {/* Header + Tabs */}
             <div className="flex items-center justify-between border-b border-[#E6B84C]/18 bg-[#15100C]/95 px-3.5 py-2.5">
@@ -352,11 +384,13 @@ export const LiveChatDrawer: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Compact Floating Toggle Button (Bottom-Left) */}
+      {/* Compact Floating Toggle Button (Desktop corner only when hideMobileTrigger is true) */}
       <button
         type="button"
         onClick={handleToggle}
-        className={`glass-panel relative flex items-center gap-2 rounded-2xl border px-3.5 py-2.5 text-xs font-bold shadow-2xl transition cursor-pointer ${
+        className={`pointer-events-auto glass-panel relative items-center gap-2 rounded-2xl border px-3.5 py-2.5 text-xs font-bold shadow-2xl transition cursor-pointer ${
+          hideMobileTrigger ? 'hidden md:flex' : 'flex'
+        } ${
           open
             ? 'border-[#E6B84C] bg-[#241B13] text-[#F6D889]'
             : 'border-[#E6B84C]/30 text-[#FAF3E3] hover:border-[#E6B84C]'

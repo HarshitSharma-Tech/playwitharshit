@@ -22,9 +22,18 @@ import { useGameStore } from '../../store/useGameStore';
 interface VoiceControlPanelProps {
   roomCode: string;
   userId: string;
+  externalExpanded?: boolean;
+  onExternalExpandedChange?: (open: boolean) => void;
+  hideMobileTrigger?: boolean;
 }
 
-export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, userId }) => {
+export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({
+  roomCode,
+  userId,
+  externalExpanded,
+  onExternalExpandedChange,
+  hideMobileTrigger = false,
+}) => {
   const {
     status,
     micEnabled,
@@ -54,7 +63,13 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
   } = useVoiceStore();
 
   const { sendVoicePhrase } = useGameStore();
-  const [expanded, setExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const expanded = externalExpanded !== undefined ? externalExpanded : internalExpanded;
+  const setExpanded = (next: boolean | ((prev: boolean) => boolean)) => {
+    const resolved = typeof next === 'function' ? next(expanded) : next;
+    if (onExternalExpandedChange) onExternalExpandedChange(resolved);
+    else setInternalExpanded(resolved);
+  };
   const [showPhrases, setShowPhrases] = useState(false);
 
   // Hold 'V' key for Push-to-Talk (zero echo!)
@@ -95,7 +110,13 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
             : 'bg-[#6E6151]';
 
   return (
-    <div className="fixed bottom-3 right-3 z-30 flex flex-col items-end gap-2">
+    <div
+      className={`fixed z-40 flex flex-col gap-2 ${
+        hideMobileTrigger
+          ? 'top-14 right-3 left-3 items-center md:top-auto md:left-auto md:bottom-3 md:right-3 md:items-end pointer-events-none'
+          : 'bottom-3 right-3 items-end'
+      }`}
+    >
       {/* Browser Autoplay Unmute Prompt */}
       <AnimatePresence>
         {autoplayBlocked && speakerEnabled && (
@@ -105,7 +126,7 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             onClick={unlockAudio}
-            className="glass-panel flex items-center gap-2 rounded-xl border border-[#1CD696]/70 bg-[#0D271E]/95 px-3.5 py-2 text-xs font-bold text-[#1CD696] shadow-xl hover:bg-[#1CD696] hover:text-[#0B0907] cursor-pointer"
+            className="pointer-events-auto glass-panel flex items-center gap-2 rounded-xl border border-[#1CD696]/70 bg-[#0D271E]/95 px-3.5 py-2 text-xs font-bold text-[#1CD696] shadow-xl hover:bg-[#1CD696] hover:text-[#0B0907] cursor-pointer"
           >
             <Volume2 className="h-4 w-4 animate-pulse" />
             Tap to Hear Room Voice
@@ -120,7 +141,7 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.96 }}
-            className="glass-panel w-[calc(100vw-24px)] max-w-[300px] rounded-2xl border border-[#E1384B]/55 p-3.5 shadow-2xl"
+            className="pointer-events-auto glass-panel w-[calc(100vw-24px)] max-w-[300px] rounded-2xl border border-[#E1384B]/55 p-3.5 shadow-2xl"
           >
             <div className="flex items-start gap-2.5">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#E1384B]" />
@@ -154,7 +175,7 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
             initial={{ opacity: 0, y: 12, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
-            className="glass-panel w-[calc(100vw-24px)] max-w-[310px] rounded-2xl border border-[#E6B84C]/40 p-4 shadow-2xl space-y-3.5"
+            className="pointer-events-auto glass-panel w-[calc(100vw-24px)] max-w-[310px] rounded-2xl border border-[#E6B84C]/40 p-4 shadow-2xl space-y-3.5"
           >
             <div className="flex items-center justify-between border-b border-[#E6B84C]/18 pb-2.5">
               <div className="flex items-center gap-2">
@@ -336,9 +357,11 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
         )}
       </AnimatePresence>
 
-      {/* COMPACT MOBILE-FRIENDLY FLOATING VOICE PILL */}
+      {/* COMPACT MOBILE-FRIENDLY FLOATING VOICE PILL (Desktop corner only when hideMobileTrigger is true) */}
       <div
-        className={`glass-panel flex items-center gap-1.5 rounded-2xl px-2.5 py-1.5 shadow-2xl border transition ${
+        className={`pointer-events-auto glass-panel items-center gap-1.5 rounded-2xl px-2.5 py-1.5 shadow-2xl border transition ${
+          hideMobileTrigger ? 'hidden md:flex' : 'flex'
+        } ${
           speaking && micEnabled && !muted
             ? 'border-emerald-400/70 shadow-[0_0_24px_rgba(16,185,129,0.28)]'
             : micEnabled

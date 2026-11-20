@@ -12,6 +12,7 @@ interface OpponentSeatProps {
   isReceivingDeal?: boolean;
   voicePeer?: VoicePeerState;
   reaction?: ReactionEvent;
+  onInspect?: (player: PublicPlayerGameState) => void;
 }
 
 export const OpponentSeat: React.FC<OpponentSeatProps> = ({
@@ -22,6 +23,7 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
   isReceivingDeal = false,
   voicePeer,
   reaction,
+  onInspect,
 }) => {
   const [showReputation, setShowReputation] = useState(false);
 
@@ -40,10 +42,18 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
 
   return (
     <div
-      className="relative flex flex-col items-center select-none"
-      onMouseEnter={() => setShowReputation(true)}
+      className="relative flex shrink-0 flex-col items-center select-none"
+      onMouseEnter={() => {
+        if (window.innerWidth >= 768) setShowReputation(true);
+      }}
       onMouseLeave={() => setShowReputation(false)}
-      onClick={() => setShowReputation((v) => !v)}
+      onClick={() => {
+        if (onInspect && window.innerWidth < 768) {
+          onInspect(player);
+        } else {
+          setShowReputation((v) => !v);
+        }
+      }}
     >
       {/* Floating Emoji OR Voice Phrase Reaction */}
       <AnimatePresence>
@@ -53,10 +63,10 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
             initial={{ opacity: 0, y: 12, scale: 0.6 }}
             animate={{ opacity: 1, y: -14, scale: 1 }}
             exit={{ opacity: 0, y: -26, scale: 0.85 }}
-            className={`pointer-events-none absolute -top-10 z-30 shadow-xl whitespace-nowrap ${
+            className={`pointer-events-none absolute -top-8 md:-top-10 z-30 shadow-xl whitespace-nowrap ${
               reaction.phrase
-                ? 'rounded-xl bg-[#1D1510]/95 border border-[#E6B84C]/70 px-3 py-1.5 text-xs font-bold text-[#FAF3E3]'
-                : 'rounded-full bg-[#19130F]/95 border border-[#E6B84C]/35 px-2.5 py-1 text-xl'
+                ? 'rounded-xl bg-[#1D1510]/95 border border-[#E6B84C]/70 px-2.5 py-1 text-[10px] md:text-xs font-bold text-[#FAF3E3]'
+                : 'rounded-full bg-[#19130F]/95 border border-[#E6B84C]/35 px-2 py-0.5 text-base md:text-xl'
             }`}
           >
             {reaction.phrase ? `“${reaction.phrase}”` : reaction.emoji}
@@ -64,11 +74,58 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Mahogany & Brass Opponent Plaque */}
+      {/* COMPACT MOBILE OPPONENT CHIP (< md) — Avatar + Short Name + Card Count */}
+      <div
+        className={`flex md:hidden items-center gap-2 rounded-xl px-2.5 py-1.5 transition-all cursor-pointer ${
+          isPendingWinner
+            ? 'bg-[#311317] border-2 border-[#E6B84C] shadow-[0_0_16px_rgba(230,184,76,0.4)]'
+            : isSpeaking
+              ? 'bg-[#10271E] border-2 border-emerald-400'
+              : isCurrentTurn
+                ? 'bg-[#251C12] border-2 border-[#E6B84C] shadow-[0_0_16px_rgba(230,184,76,0.38)]'
+                : isReceivingDeal
+                  ? 'bg-[#17281F] border-2 border-emerald-400'
+                  : 'bg-[#16110E]/95 border border-[#E6B84C]/25'
+        }`}
+      >
+        <div className="relative shrink-0">
+          <AvatarBadge
+            avatar={player.avatar}
+            size="xs"
+            active={isCurrentTurn || isSpeaking}
+            isBot={player.isBot}
+          />
+          {!player.connected && (
+            <span className="absolute -top-1 -left-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#E1384B] text-white">
+              <WifiOff className="h-2 w-2" />
+            </span>
+          )}
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1">
+            <span className="max-w-[66px] truncate text-[11px] font-bold text-[#FAF3E3]">
+              {player.username}
+            </span>
+            {isMicActive && <Mic className="h-2.5 w-2.5 shrink-0 text-emerald-400" />}
+            {isMutedInVoice && <MicOff className="h-2.5 w-2.5 shrink-0 text-[#FF9BA6]" />}
+          </div>
+          <div className="flex items-center gap-1 font-[var(--font-mono)] text-[9px] font-bold">
+            <span className="text-[#E6B84C]">{player.cardCount}c</span>
+            {player.hasPassedRound && !isLastActor && (
+              <span className="rounded bg-white/10 px-1 text-[8px] text-[#DFD2BE]">PASS</span>
+            )}
+            {isCurrentTurn && (
+              <span className="rounded bg-[#E6B84C]/25 px-1 text-[8px] text-[#F6D889]">TURN</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* DESKTOP MAHOGANY & BRASS OPPONENT PLAQUE (md+) */}
       <motion.div
         animate={isReceivingDeal ? { scale: [1, 1.06, 1] } : { scale: 1 }}
         transition={{ duration: 0.2 }}
-        className={`relative flex w-36 sm:w-44 flex-col rounded-2xl px-3 py-2.5 transition-all cursor-pointer ${
+        className={`relative hidden md:flex w-44 flex-col rounded-2xl px-3 py-2.5 transition-all cursor-pointer ${
           isPendingWinner
             ? 'bg-[#311317] border-2 border-[#E6B84C] shadow-[0_0_26px_rgba(230,184,76,0.4)]'
             : isSpeaking
@@ -169,9 +226,9 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
         </div>
       </motion.div>
 
-      {/* Mini Fanned Crimson-Gold Card Backs below seat */}
+      {/* Mini Fanned Crimson-Gold Card Backs below seat (Desktop only) */}
       {miniCardsCount > 0 && (
-        <div className="-mt-1.5 flex items-center justify-center">
+        <div className="-mt-1.5 hidden md:flex items-center justify-center">
           {Array.from({ length: miniCardsCount }).map((_, idx) => {
             const offset = idx - (miniCardsCount - 1) / 2;
             return (

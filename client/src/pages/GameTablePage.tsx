@@ -8,8 +8,10 @@ import {
   Gauge,
   Layers,
   LogOut,
+  MessageCircle,
   Mic,
   MicOff,
+  MoreVertical,
   ScrollText,
   Send,
   Settings,
@@ -20,13 +22,14 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { RANKS, type Rank, type ReactionEmoji } from '@shared/types';
+import { RANKS, type PublicPlayerGameState, type Rank, type ReactionEmoji } from '@shared/types';
 import { useGameStore } from '../store/useGameStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useVoiceStore } from '../store/useVoiceStore';
 import { useToastStore } from '../store/useToastStore';
 import { soundEngine } from '../lib/sound';
 import { PlayingCard } from '../components/PlayingCard';
+import { AvatarBadge } from '../components/AvatarBadge';
 import { OpponentSeat } from '../components/game/OpponentSeat';
 import { ChallengeRevealOverlay } from '../components/game/ChallengeRevealOverlay';
 import { WinnerModal } from '../components/game/WinnerModal';
@@ -83,6 +86,11 @@ export const GameTablePage: React.FC = () => {
   const [showLog, setShowLog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showYourTurnBanner, setShowYourTurnBanner] = useState(false);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [mobileVoiceOpen, setMobileVoiceOpen] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [inspectedPlayer, setInspectedPlayer] = useState<PublicPlayerGameState | null>(null);
   const prevTurnKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -293,7 +301,7 @@ export const GameTablePage: React.FC = () => {
     : 'Any Rank';
 
   return (
-    <div className="relative flex min-h-[100dvh] flex-col justify-between bg-[#0B0907] overflow-hidden touch-manipulation">
+    <div className="relative flex h-[100dvh] md:h-auto md:min-h-[100dvh] flex-col justify-between bg-[#0B0907] overflow-hidden touch-manipulation">
       {/* Subtle warm chandelier ambient spotlight over room */}
       <div
         className="pointer-events-none absolute top-0 left-1/2 h-[420px] w-[780px] -translate-x-1/2 rounded-full opacity-20 blur-3xl"
@@ -301,10 +309,189 @@ export const GameTablePage: React.FC = () => {
       />
 
       {/* TOP MAHOGANY & BRASS HUD */}
-      <header className="z-30 border-b border-[#E6B84C]/20 bg-[#120D0A]/92 backdrop-blur-xl px-3 py-2.5 sm:px-6">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+      <header className="z-30 shrink-0 border-b border-[#E6B84C]/20 bg-[#120D0A]/92 backdrop-blur-xl px-2.5 py-2 md:px-6 md:py-2.5">
+        {/* MOBILE SINGLE-ROW HEADER (< md): Room Code, Timer, Chat, Voice, More */}
+        <div className="flex md:hidden items-center justify-between gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="flex h-9 items-center gap-1 rounded-xl bg-[#1C140F] border border-[#E6B84C]/35 px-2.5 font-[var(--font-mono)] text-[11px] font-bold tracking-wider text-[#FAF3E3] cursor-pointer"
+              title="Copy room code"
+            >
+              {gameState.roomCode}
+              <Copy className="h-3 w-3 text-[#E6B84C]" />
+            </button>
+
+            <div className="flex h-9 items-center gap-1 rounded-xl bg-[#1C140F] border border-[#E6B84C]/20 px-2.5">
+              <Clock
+                className={`h-3.5 w-3.5 ${
+                  !isDealingStage && remainingSec <= 5
+                    ? 'text-[#E1384B] animate-pulse'
+                    : 'text-[#E6B84C]'
+                }`}
+              />
+              <span
+                className={`font-[var(--font-mono)] text-xs font-bold ${
+                  !isDealingStage && remainingSec <= 5 ? 'text-[#E1384B]' : 'text-[#FAF3E3]'
+                }`}
+              >
+                {isDealingStage ? '--' : `${remainingSec}s`}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setMobileVoiceOpen(false);
+                setShowMoreMenu(false);
+                setMobileChatOpen((v) => !v);
+              }}
+              className={`relative flex h-9 items-center gap-1 rounded-xl border px-2.5 text-[11px] font-bold cursor-pointer ${
+                mobileChatOpen
+                  ? 'bg-[#E6B84C]/20 border-[#E6B84C] text-[#F6D889]'
+                  : 'bg-[#1C140F] border-[#E6B84C]/25 text-[#FAF3E3]'
+              }`}
+              aria-label="Open Chat"
+            >
+              <MessageCircle className="h-3.5 w-3.5 text-[#1CD696]" />
+              <span>Chat</span>
+              {chatUnread > 0 && (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#E1384B] px-1 font-[var(--font-mono)] text-[9px] font-bold text-white">
+                  {chatUnread > 9 ? '9+' : chatUnread}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMobileChatOpen(false);
+                setShowMoreMenu(false);
+                setMobileVoiceOpen((v) => !v);
+              }}
+              className={`flex h-9 items-center gap-1 rounded-xl border px-2.5 text-[11px] font-bold cursor-pointer ${
+                myVoiceMicEnabled && !myVoiceMuted
+                  ? 'bg-emerald-500/20 border-emerald-400/70 text-emerald-300'
+                  : myVoiceMicEnabled && myVoiceMuted
+                    ? 'bg-[#E1384B]/20 border-[#E1384B]/60 text-[#FF9BA6]'
+                    : mobileVoiceOpen
+                      ? 'bg-[#E6B84C]/20 border-[#E6B84C] text-[#F6D889]'
+                      : 'bg-[#1C140F] border-[#E6B84C]/25 text-[#FAF3E3]'
+              }`}
+              aria-label="Open Voice Controls"
+            >
+              {myVoiceMicEnabled && myVoiceMuted ? (
+                <MicOff className="h-3.5 w-3.5" />
+              ) : (
+                <Mic
+                  className={`h-3.5 w-3.5 ${
+                    myVoiceSpeaking && myVoiceMicEnabled && !myVoiceMuted ? 'animate-pulse' : ''
+                  }`}
+                />
+              )}
+              <span>
+                {myVoiceMicEnabled ? (myVoiceMuted ? 'Muted' : 'Live') : 'Voice'}
+              </span>
+            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileChatOpen(false);
+                  setMobileVoiceOpen(false);
+                  setShowMoreMenu((v) => !v);
+                }}
+                className={`flex h-9 w-9 items-center justify-center rounded-xl border cursor-pointer ${
+                  showMoreMenu
+                    ? 'bg-[#E6B84C]/20 border-[#E6B84C] text-[#F6D889]'
+                    : 'bg-[#1C140F] border-[#E6B84C]/25 text-[#FAF3E3]'
+                }`}
+                aria-label="More options"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+
+              {showMoreMenu && (
+                <div className="glass-panel absolute right-0 top-11 z-50 w-56 rounded-2xl border border-[#E6B84C]/40 p-2.5 shadow-2xl space-y-1.5">
+                  <div className="flex items-center justify-between px-2 py-1 border-b border-white/10">
+                    <span className="font-[var(--font-mono)] text-[10px] font-bold uppercase tracking-wider text-[#E6B84C]">
+                      Round {gameState.roundNumber} · Pile {gameState.pileCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowMoreMenu(false)}
+                      className="text-[#B9A992] hover:text-white cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="px-1 py-1">
+                    <MusicPlayerPill compact />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      setShowLog((v) => !v);
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-[#FAF3E3] hover:bg-white/[0.06] cursor-pointer"
+                  >
+                    <ScrollText className="h-4 w-4 text-[#E6B84C]" />
+                    Match History / Log
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleSound}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-[#FAF3E3] hover:bg-white/[0.06] cursor-pointer"
+                  >
+                    {soundEnabled ? (
+                      <Volume2 className="h-4 w-4 text-emerald-400" />
+                    ) : (
+                      <VolumeX className="h-4 w-4 text-[#E1384B]" />
+                    )}
+                    Sound: {soundEnabled ? 'On' : 'Off'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      setModal('settings', true);
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-[#FAF3E3] hover:bg-white/[0.06] cursor-pointer"
+                  >
+                    <Settings className="h-4 w-4 text-[#B9A992]" />
+                    Settings
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      leaveRoom();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl bg-[#E1384B]/15 px-2.5 py-2 text-xs font-bold text-[#FF9BA6] hover:bg-[#E1384B]/25 cursor-pointer"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Leave Table
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* DESKTOP HEADER (md+) */}
+        <div className="mx-auto hidden md:flex max-w-7xl flex-wrap items-center justify-between gap-3">
           {/* Left: Room Code + Round + Total Cards in Pile */}
-          <div className="flex items-center gap-2 sm:gap-2.5">
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={handleCopyCode}
@@ -315,12 +502,12 @@ export const GameTablePage: React.FC = () => {
               <Copy className="h-3 w-3 text-[#E6B84C]" />
             </button>
 
-            <div className="rounded-xl bg-[#1C140F] border border-[#E6B84C]/18 px-2.5 sm:px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]">
+            <div className="rounded-xl bg-[#1C140F] border border-[#E6B84C]/18 px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]">
               R<strong className="text-[#FAF3E3]">{gameState.roundNumber}</strong>
             </div>
 
             <div
-              className="flex items-center gap-1.5 rounded-xl bg-[#1C140F] border border-[#E6B84C]/25 px-2.5 sm:px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]"
+              className="flex items-center gap-1.5 rounded-xl bg-[#1C140F] border border-[#E6B84C]/25 px-3 py-1.5 font-[var(--font-mono)] text-xs text-[#B9A992]"
               title="Total cards currently in the center pile"
             >
               <Layers className="h-3.5 w-3.5 text-[#E6B84C]" />
@@ -417,9 +604,9 @@ export const GameTablePage: React.FC = () => {
       </header>
 
       {/* CENTER ROYAL EMERALD CASINO TABLE */}
-      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col items-center justify-center px-3 py-3 sm:px-6 sm:py-5">
-        {/* Opponents Row: compact horizontal scroll on mobile so table + hand always fit cleanly! */}
-        <div className="z-20 mb-3 sm:mb-5 flex w-full flex-nowrap sm:flex-wrap items-start justify-start sm:justify-center gap-2.5 sm:gap-5 overflow-x-auto sm:overflow-visible pb-2 px-1">
+      <main className="relative mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col items-center justify-center px-2.5 py-1.5 md:px-6 md:py-5">
+        {/* Opponents Row: compact horizontal scroll inside row on mobile */}
+        <div className="z-20 mb-2 md:mb-5 flex w-full flex-nowrap md:flex-wrap items-center md:items-start justify-start md:justify-center gap-2 md:gap-5 overflow-x-auto md:overflow-visible pb-1 px-0.5">
           {orderedOpponents.map((opp) => {
             const latestRx = [...reactions].reverse().find((r) => r.playerId === opp.id);
             const vp = voicePeers.find((peer) => peer.userId === opp.id);
@@ -439,20 +626,21 @@ export const GameTablePage: React.FC = () => {
                 isReceivingDeal={isReceivingDeal}
                 voicePeer={vp}
                 reaction={latestRx}
+                onInspect={setInspectedPlayer}
               />
             );
           })}
         </div>
 
         {/* ROYAL EMERALD BAIZE OVAL TABLE WITH MAHOGANY & GOLD RAIL */}
-        <div className="relative flex w-full max-w-3xl flex-col items-center justify-center overflow-hidden rounded-[64px] sm:rounded-[125px] poker-felt px-6 py-9 sm:py-12">
+        <div className="relative flex w-full max-w-3xl flex-col items-center justify-center overflow-hidden rounded-[36px] md:rounded-[125px] poker-felt px-4 py-3 md:px-6 md:py-10">
           {/* Brushed gold double betting line stitched onto the emerald felt */}
-          <div className="pointer-events-none absolute inset-3.5 rounded-[52px] sm:rounded-[112px] border border-[#E6B84C]/35" />
-          <div className="pointer-events-none absolute inset-5 rounded-[46px] sm:rounded-[104px] border border-dashed border-[#E6B84C]/22" />
+          <div className="pointer-events-none absolute inset-2 md:inset-3.5 rounded-[28px] md:rounded-[112px] border border-[#E6B84C]/35" />
+          <div className="pointer-events-none absolute inset-3 md:inset-5 rounded-[24px] md:rounded-[104px] border border-dashed border-[#E6B84C]/22" />
 
           {/* Faint inlaid table watermark */}
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-[0.07]">
-            <span className="font-[var(--font-display)] text-5xl sm:text-7xl font-black tracking-[0.28em] text-[#F6D889]">
+            <span className="font-[var(--font-display)] text-4xl md:text-7xl font-black tracking-[0.28em] text-[#F6D889]">
               BLUFFED
             </span>
           </div>
@@ -466,9 +654,9 @@ export const GameTablePage: React.FC = () => {
                 exit={{ opacity: 0, scale: 1.08, y: -12 }}
                 className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
               >
-                <div className="flex items-center gap-2.5 rounded-2xl bg-[#140E08]/95 border-2 border-[#E6B84C] px-7 py-3 shadow-[0_0_55px_rgba(230,184,76,0.55)]">
-                  <Sparkles className="h-5 w-5 text-[#E6B84C]" />
-                  <span className="font-[var(--font-display)] text-2xl sm:text-3xl font-black tracking-widest text-[#FAF3E3]">
+                <div className="flex items-center gap-2 rounded-2xl bg-[#140E08]/95 border-2 border-[#E6B84C] px-5 py-2 md:px-7 md:py-3 shadow-[0_0_55px_rgba(230,184,76,0.55)]">
+                  <Sparkles className="h-4 w-4 md:h-5 md:w-5 text-[#E6B84C]" />
+                  <span className="font-[var(--font-display)] text-lg md:text-3xl font-black tracking-widest text-[#FAF3E3]">
                     YOUR TURN
                   </span>
                 </div>
@@ -485,99 +673,102 @@ export const GameTablePage: React.FC = () => {
             />
           ) : (
             <>
-              {/* Status Pill */}
-              <div className="z-10 mb-5">
+              {/* Turn Message + Required Rank right near the cards */}
+              <div className="z-10 mb-2 md:mb-4">
                 {gameState.phase === 'playing' && (
                   <div
-                    className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-[var(--font-mono)] text-[11px] sm:text-xs font-bold uppercase tracking-wider border shadow-lg text-center ${isMyTurn
-                      ? gameState.pendingWinnerId
-                        ? 'bg-[#3A0E16]/95 border-[#E1384B] text-[#FFC4CB]'
-                        : 'bg-[#1F160B]/95 border-[#E6B84C] text-[#F6D889]'
-                      : 'bg-[#091F16]/90 border-[#E6B84C]/30 text-[#D7E6DD]'
-                      }`}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-[var(--font-mono)] text-[10px] md:text-xs font-bold uppercase tracking-wider border shadow-lg text-center ${
+                      isMyTurn
+                        ? gameState.pendingWinnerId
+                          ? 'bg-[#3A0E16]/95 border-[#E1384B] text-[#FFC4CB]'
+                          : 'bg-[#1F160B]/95 border-[#E6B84C] text-[#F6D889]'
+                        : 'bg-[#091F16]/90 border-[#E6B84C]/30 text-[#D7E6DD]'
+                    }`}
                   >
                     <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${isMyTurn
-                        ? gameState.pendingWinnerId
-                          ? 'bg-[#E1384B] animate-ping'
-                          : 'bg-[#E6B84C] animate-ping'
-                        : 'bg-emerald-400'
-                        }`}
+                      className={`h-2 w-2 shrink-0 rounded-full ${
+                        isMyTurn
+                          ? gameState.pendingWinnerId
+                            ? 'bg-[#E1384B] animate-ping'
+                            : 'bg-[#E6B84C] animate-ping'
+                          : 'bg-emerald-400'
+                      }`}
                     />
                     {isMyTurn
                       ? isFreshRound
-                        ? 'YOUR TURN · FRESH ROUND — PICK ANY RANK'
+                        ? 'YOUR TURN · PICK ANY RANK'
                         : gameState.pendingWinnerId
-                          ? 'YOUR TURN · FINAL HAND — PASS OR CALL BLUFF'
-                          : `YOUR TURN · PLAY ${rankWord.toUpperCase()}S, PASS, OR CALL BLUFF`
-                      : `SEAT #${activeSeatNum} ${activePlayer?.username ?? 'Player'}'S TURN`}
+                          ? `YOUR TURN · FINAL HAND (${rankWord.toUpperCase()}S)`
+                          : `YOUR TURN · PLAY ${rankWord.toUpperCase()}S`
+                      : `SEAT #${activeSeatNum} ${activePlayer?.username ?? 'Player'} · ${
+                          isFreshRound ? 'ANY RANK' : `${rankWord.toUpperCase()}S`
+                        }`}
                   </div>
                 )}
               </div>
 
-              {/* Central Discard Pile */}
+              {/* Central Discard Pile (Compact on Mobile, single pile count) */}
               <div className="relative z-10 flex flex-col items-center">
-                <div className="relative flex h-32 w-32 items-center justify-center">
+                <div className="relative flex h-20 w-24 md:h-28 md:w-32 items-center justify-center">
                   {gameState.pileCount === 0 ? (
-                    <div className="flex h-28 w-20 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#E6B84C]/35 bg-[#07261A]/60 text-center">
-                      <span className="font-[var(--font-mono)] text-[9px] font-bold uppercase tracking-wider text-[#C6B99B]">
-                        CENTER
+                    <div className="flex h-20 w-14 md:h-28 md:w-20 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#E6B84C]/35 bg-[#07261A]/60 text-center">
+                      <span className="font-[var(--font-mono)] text-[8px] md:text-[9px] font-bold uppercase tracking-wider text-[#C6B99B]">
+                        EMPTY
                       </span>
-                      <span className="font-[var(--font-mono)] text-[9px] uppercase tracking-wider text-[#8BA999]">
-                        POT
+                      <span className="font-[var(--font-mono)] text-[8px] md:text-[9px] uppercase tracking-wider text-[#8BA999]">
+                        PILE
                       </span>
                     </div>
                   ) : (
                     <>
-                      {Array.from({ length: Math.min(6, gameState.pileCount) }).map((_, i) => (
-                        <motion.div
-                          key={`${gameState.lastPlay?.playId ?? 'pile'}-${i}`}
-                          initial={{ scale: 0.85, y: -24, opacity: 0 }}
-                          animate={{
-                            scale: 1,
-                            y: 0,
-                            opacity: 1,
-                            rotate: (i - 2.5) * 7,
-                          }}
-                          transition={{ type: 'spring', stiffness: 320, damping: 24 }}
-                          className="absolute"
-                        >
-                          <PlayingCard faceDown size="sm" />
-                        </motion.div>
-                      ))}
-                      <div className="absolute -bottom-3 z-20 whitespace-nowrap rounded-full bg-[#150E09] border border-[#E6B84C]/70 px-3 py-0.5 font-[var(--font-mono)] text-[11px] font-bold text-[#F6D889] shadow-lg">
-                        {gameState.pileCount} {gameState.pileCount === 1 ? 'CARD' : 'CARDS'} IN PILE
+                      <div className="scale-75 md:scale-100 flex items-center justify-center">
+                        {Array.from({ length: Math.min(5, gameState.pileCount) }).map((_, i) => (
+                          <motion.div
+                            key={`${gameState.lastPlay?.playId ?? 'pile'}-${i}`}
+                            initial={{ scale: 0.85, y: -18, opacity: 0 }}
+                            animate={{
+                              scale: 1,
+                              y: 0,
+                              opacity: 1,
+                              rotate: (i - 2) * 7,
+                            }}
+                            transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+                            className="absolute"
+                          >
+                            <PlayingCard faceDown size="sm" />
+                          </motion.div>
+                        ))}
+                      </div>
+                      <div className="absolute -bottom-2 z-20 whitespace-nowrap rounded-full bg-[#150E09] border border-[#E6B84C]/70 px-2.5 py-0.5 font-[var(--font-mono)] text-[10px] font-bold text-[#F6D889] shadow-lg">
+                        {gameState.pileCount} {gameState.pileCount === 1 ? 'card' : 'cards'} in pile
                       </div>
                     </>
                   )}
                 </div>
 
-                {/* Last Declaration Banner */}
+                {/* One Clear Line for Last Claim */}
                 <AnimatePresence mode="wait">
                   {gameState.lastPlay ? (
                     <motion.div
                       key={gameState.lastPlay.playId}
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      className="mt-5 text-center"
+                      exit={{ opacity: 0, y: -6 }}
+                      className="mt-3 md:mt-4 text-center"
                     >
-                      <p className="text-sm sm:text-base font-bold text-[#FAF3E3] drop-shadow">
+                      <p className="text-xs md:text-base font-bold text-[#FAF3E3] drop-shadow">
                         <span className="text-[#F6D889]">{gameState.lastPlay.playerName}</span>{' '}
-                        threw{' '}
-                        <span className="font-[var(--font-mono)] text-[#FAF3E3]">
-                          {gameState.lastPlay.count} {gameState.lastPlay.count === 1 ? 'card' : 'cards'}
-                        </span>{' '}
-                        (said{' '}
-                        <span className="rounded-lg bg-[#16100B]/90 border border-[#E6B84C]/60 px-2 py-0.5 font-[var(--font-mono)] font-bold text-[#F6D889]">
-                          {gameState.lastPlay.count}× {gameState.lastPlay.declaredRank}
+                        played {gameState.lastPlay.count} as{' '}
+                        <span className="text-[#F6D889]">
+                          {RANK_NAMES[gameState.lastPlay.declaredRank] ??
+                            gameState.lastPlay.declaredRank}
+                          s
                         </span>
-                        )
                       </p>
                       {gameState.pendingWinnerId && (
-                        <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-[#3D1218]/95 border border-[#E6B84C] px-3 py-1 font-[var(--font-mono)] text-[11px] font-bold text-[#F6D889]">
-                          <Flame className="h-3.5 w-3.5 text-[#E1384B]" />
-                          FINAL HAND! Call Bluff on your turn or they win!
+                        <p className="mt-1 inline-flex items-center gap-1 rounded-lg bg-[#3D1218]/95 border border-[#E6B84C] px-2.5 py-0.5 font-[var(--font-mono)] text-[10px] font-bold text-[#F6D889]">
+                          <Flame className="h-3 w-3 text-[#E1384B]" />
+                          FINAL HAND! Catch Lie or they win!
                         </p>
                       )}
                     </motion.div>
@@ -586,14 +777,13 @@ export const GameTablePage: React.FC = () => {
                       key="fresh-table"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="mt-5 text-xs text-[#CBE0D4] text-center"
+                      className="mt-3 md:mt-4 text-[11px] md:text-xs text-[#CBE0D4] text-center"
                     >
-                      Fresh round —{' '}
+                      New pile —{' '}
                       <strong className="text-[#F6D889]">
                         {isMyTurn ? 'you' : activePlayer?.username ?? 'starter'}
                       </strong>{' '}
-                      may throw 1 to {maxSelectableCards} cards and declare{' '}
-                      <strong className="text-[#F6D889]">any rank (A–K)</strong>.
+                      can open with any rank.
                     </motion.p>
                   )}
                 </AnimatePresence>
@@ -645,9 +835,160 @@ export const GameTablePage: React.FC = () => {
         </AnimatePresence>
       </main>
 
-      {/* BOTTOM WALNUT CONSOLE & CURVED HAND FAN (mobile safe-area clearance above floating Chat & Voice pills) */}
-      <section className="z-20 border-t border-[#E6B84C]/20 bg-[#120E0B]/95 backdrop-blur-xl px-3 pb-20 sm:pb-6 pt-3 sm:px-6">
+      {/* BOTTOM WALNUT CONSOLE: Hand + Actions together with safe-area padding */}
+      <section className="z-20 shrink-0 border-t border-[#E6B84C]/20 bg-[#120E0B]/96 backdrop-blur-xl px-2.5 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:pt-3 md:pb-6">
         <div className="mx-auto max-w-6xl">
+          {/* MOBILE LAYOUT (< md): Hand + Side Rank Picker (on fresh round) + 44px Action Row below */}
+          <div className="flex md:hidden flex-col gap-2">
+            {/* Hand Row (+ compact Rank Picker beside it when opening a fresh pile) */}
+            {!gameState.isSpectator && (
+              <div className="flex items-center gap-2">
+                {canPlayCards && isFreshRound && (
+                  <div className="flex shrink-0 flex-col items-center rounded-xl bg-[#1A130D] border border-[#E6B84C]/40 p-1.5">
+                    <span className="mb-1 font-[var(--font-mono)] text-[8px] font-bold uppercase tracking-wider text-[#D8B974]">
+                      RANK
+                    </span>
+                    <div className="grid grid-cols-2 gap-1 max-h-[92px] overflow-y-auto pr-0.5">
+                      {RANKS.map((r) => {
+                        const active = declaredRank === r;
+                        const inHand = myHandRanks.has(r);
+                        return (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => {
+                              vibrateTap(10);
+                              setDeclaredRank(r);
+                            }}
+                            className={`relative flex h-7 w-7 items-center justify-center rounded-md font-[var(--font-mono)] text-[11px] font-extrabold cursor-pointer ${
+                              active
+                                ? 'bg-[#E6B84C] text-[#140E08]'
+                                : inHand
+                                  ? 'bg-[#261D15] border border-[#E6B84C]/35 text-[#FAF3E3]'
+                                  : 'bg-[#120D0A] border border-white/10 text-[#968674]'
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0">
+                  {gameState.myHand.length === 0 ? (
+                    <div className="rounded-xl border border-[#E6B84C]/25 bg-[#1A1410]/85 px-4 py-3 text-center">
+                      <p className="font-[var(--font-display)] text-xs font-bold text-[#F6D889]">
+                        {isDealingStage
+                          ? 'Dealing your cards...'
+                          : 'Hand Empty — Survive to Win!'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-nowrap items-end gap-1.5 overflow-x-auto px-1 pt-2.5 pb-1">
+                      {gameState.myHand.map((card) => {
+                        const isSelected = selectedIds.includes(card.id);
+                        const matchesClaim = card.rank === activeClaimRank;
+                        return (
+                          <div
+                            key={card.id}
+                            className={`relative shrink-0 transition-transform ${
+                              isSelected ? '-translate-y-2' : ''
+                            }`}
+                          >
+                            {matchesClaim && canPlayCards && (
+                              <span className="pointer-events-none absolute -top-2 left-1/2 z-20 -translate-x-1/2 rounded-full bg-[#E6B84C] px-1 py-0.2 font-[var(--font-mono)] text-[7px] font-black text-[#140E08]">
+                                {activeClaimRank}
+                              </span>
+                            )}
+                            <PlayingCard
+                              card={card}
+                              size="sm"
+                              selected={isSelected}
+                              disabled={!canPlayCards}
+                              onClick={() => toggleCardSelection(card.id)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Mobile 44px+ Action Bar right under the hand */}
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {canPlayCards && (
+                <button
+                  type="button"
+                  disabled={selectedIds.length === 0 || submitting}
+                  onClick={handlePlaySelected}
+                  className={`flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-extrabold uppercase tracking-wide transition disabled:opacity-40 cursor-pointer ${
+                    selectionIsBluff ? 'crimson-btn' : 'gold-btn'
+                  }`}
+                >
+                  <Send className="h-3.5 w-3.5 shrink-0" />
+                  {selectedIds.length === 0
+                    ? `Tap Cards (${activeClaimRank})`
+                    : selectionIsBluff
+                      ? `Bluff ${selectedIds.length} as ${RANK_NAMES[activeClaimRank]}s`
+                      : `Play ${selectedIds.length} as ${RANK_NAMES[activeClaimRank]}s`}
+                </button>
+              )}
+
+              {canPassOrChallenge && (
+                <>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={handlePassTurn}
+                    className="flex min-h-[44px] items-center justify-center gap-1 rounded-xl bg-[#0E4A34] border border-emerald-400/60 px-3.5 text-xs font-extrabold uppercase text-emerald-200 disabled:opacity-40 cursor-pointer"
+                  >
+                    <SkipForward className="h-3.5 w-3.5" />
+                    Pass
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={handleChallengePlay}
+                    className="crimson-btn flex min-h-[44px] items-center justify-center gap-1 rounded-xl px-3.5 text-xs font-extrabold uppercase disabled:opacity-40 cursor-pointer"
+                  >
+                    <ShieldAlert className="h-4 w-4 shrink-0" />
+                    Call Bluff
+                  </button>
+                </>
+              )}
+
+              {isDealingStage && (
+                <div className="flex min-h-[44px] w-full items-center justify-center rounded-xl bg-[#1A1410] border border-[#E6B84C]/35 px-3 font-[var(--font-mono)] text-xs text-[#F6D889]">
+                  {gameState.phase === 'shuffling'
+                    ? 'Shuffling deck...'
+                    : gameState.phase === 'ready_to_deal'
+                      ? 'Ready to deal...'
+                      : `Dealing (${gameState.myHand.length}/${gameState.cardsPerPlayerTarget})...`}
+                </div>
+              )}
+
+              {!isMyTurn &&
+                !isDealingStage &&
+                !gameState.isSpectator &&
+                gameState.phase === 'playing' && (
+                  <div className="flex min-h-[44px] w-full items-center justify-center rounded-xl bg-[#1A1410] border border-[#E6B84C]/20 px-3 text-xs text-[#B9A992]">
+                    Waiting for{' '}
+                    <strong className="mx-1 text-[#F6D889]">
+                      {activePlayer?.username ?? 'player'}
+                    </strong>{' '}
+                    (Seat #{activeSeatNum})...
+                  </div>
+                )}
+            </div>
+          </div>
+
+          {/* DESKTOP LAYOUT (md+): Unchanged Action Bar + Curved Hand Fan */}
+          <div className="hidden md:block">
           {/* Action Bar Row */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             {/* Left: My Bluff Meter & Match Reputation */}
@@ -943,14 +1284,110 @@ export const GameTablePage: React.FC = () => {
               )}
             </div>
           )}
+          </div>
         </div>
       </section>
 
-      {/* FLOATING LIVE CHAT & FAMOUS MEMES DRAWER (BOTTOM-LEFT) */}
-      <LiveChatDrawer />
+      {/* PLAYER STATS MODAL (Opened when tapping an opponent on mobile) */}
+      <AnimatePresence>
+        {inspectedPlayer && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setInspectedPlayer(null)}
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 24, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.96 }}
+              className="glass-panel relative z-10 w-full max-w-sm rounded-2xl border border-[#E6B84C]/45 p-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <AvatarBadge
+                    avatar={inspectedPlayer.avatar}
+                    size="sm"
+                    isBot={inspectedPlayer.isBot}
+                  />
+                  <div>
+                    <p className="text-sm font-bold text-[#FAF3E3]">{inspectedPlayer.username}</p>
+                    <p className="font-[var(--font-mono)] text-[10px] text-[#E6B84C]">
+                      Seat #{inspectedPlayer.seatIndex + 1} · {inspectedPlayer.cardCount} cards
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInspectedPlayer(null)}
+                  className="rounded-lg p-1 text-[#B9A992] hover:text-white cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-      {/* FLOATING OPTIONAL VOICE CONTROL PANEL (BOTTOM-RIGHT) */}
-      <VoiceControlPanel roomCode={gameState.roomCode} userId={user.id} />
+              <div className="mt-3">
+                <div className="flex items-center justify-between font-[var(--font-mono)] text-[10px] text-[#B9A992]">
+                  <span>BLUFF HEAT</span>
+                  <span className="font-bold text-[#F6D889]">
+                    {inspectedPlayer.bluffMetrics.label} ({inspectedPlayer.bluffMetrics.observedMeter}%)
+                  </span>
+                </div>
+                <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-[#0B0907]">
+                  <div
+                    className={`h-full rounded-full ${
+                      inspectedPlayer.bluffMetrics.observedMeter >= 70
+                        ? 'bg-[#E1384B]'
+                        : inspectedPlayer.bluffMetrics.observedMeter >= 45
+                          ? 'bg-[#E6B84C]'
+                          : 'bg-emerald-400'
+                    }`}
+                    style={{ width: `${inspectedPlayer.bluffMetrics.observedMeter}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3.5 grid grid-cols-2 gap-2 rounded-xl bg-[#0F0B09] p-3 font-[var(--font-mono)] text-xs">
+                <span className="text-[#B9A992]">Caught Bluffs:</span>
+                <span className="text-right font-bold text-[#E1384B]">
+                  {inspectedPlayer.bluffMetrics.caughtBluffs}
+                </span>
+                <span className="text-[#B9A992]">Verified Truths:</span>
+                <span className="text-right font-bold text-emerald-400">
+                  {inspectedPlayer.bluffMetrics.verifiedTruths}
+                </span>
+                <span className="text-[#B9A992]">Correct Calls:</span>
+                <span className="text-right font-bold text-[#E6B84C]">
+                  {inspectedPlayer.matchStats.correctChallenges}
+                </span>
+                <span className="text-[#B9A992]">Wrong Calls:</span>
+                <span className="text-right font-bold text-[#B9A992]">
+                  {inspectedPlayer.matchStats.wrongChallenges}
+                </span>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* LIVE CHAT & FAMOUS MEMES DRAWER (Header-triggered on mobile, bottom-left on desktop) */}
+      <LiveChatDrawer
+        externalOpen={mobileChatOpen}
+        onExternalOpenChange={setMobileChatOpen}
+        onUnreadChange={setChatUnread}
+        hideMobileTrigger
+      />
+
+      {/* OPTIONAL VOICE CONTROL PANEL (Header-triggered on mobile, bottom-right on desktop) */}
+      <VoiceControlPanel
+        roomCode={gameState.roomCode}
+        userId={user.id}
+        externalExpanded={mobileVoiceOpen}
+        onExternalExpandedChange={setMobileVoiceOpen}
+        hideMobileTrigger
+      />
 
       {/* DRAMATIC CHALLENGE REVEAL OVERLAY */}
       <AnimatePresence>
