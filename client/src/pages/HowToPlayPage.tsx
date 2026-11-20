@@ -44,31 +44,31 @@ export const HowToPlayPage: React.FC = () => {
           {[
             {
               step: '01',
-              title: 'Follow the Required Rank',
+              title: 'Start Fresh With ANY Rank',
               Icon: Layers,
               color: 'text-[#E6B84C]',
-              text: 'Every turn advances the required rank in sequence: A → 2 → 3 … → Q → K → A. On your turn, select 1 to 4 cards and place them face down claiming they are all the current required rank.',
+              text: 'Whenever a new round starts (clean table, after a challenge, or after everyone passes), the starting player picks ANY rank (A–K) and throws 1 or more cards face down declaring that rank.',
             },
             {
               step: '02',
-              title: 'Tell the Truth — or Bluff',
+              title: 'Line-by-Line Turns (No Interrupting)',
               Icon: AlertTriangle,
               color: 'text-amber-400',
-              text: 'If you hold the required rank, you can play truthfully. If you don’t — or want to dump unwanted cards fast — mix in off-rank cards and keep a straight face.',
+              text: 'Chances move strictly clockwise seat by seat (#1 → #2 → #3…). Nobody can interrupt during another player’s turn — you act cleanly when your turn arrives.',
             },
             {
               step: '03',
-              title: 'Accept or Call CHALLENGE',
+              title: 'Play, Pass, or Call Bluff',
               Icon: ShieldAlert,
               color: 'text-[#E1384B]',
-              text: 'After every play, opponents get a brief challenge window. Click ACCEPT to pass, or CHALLENGE to flip the played cards face up. If they bluffed, the liar takes the entire discard pile. If they told the truth, the challenger takes the pile!',
+              text: 'On your turn during an active round, add cards claiming the active rank (truth or bluff!), PASS your turn, or CALL BLUFF on the previous player. If everyone passes, the pile clears and the last player starts a brand-new round!',
             },
             {
               step: '04',
               title: 'Survive Your Final Hand to Win',
               Icon: Crown,
               color: 'text-emerald-400',
-              text: 'Emptying your hand does not end the game immediately — your final play must survive the challenge window. If nobody catches a bluff on your last cards, you claim victory.',
+              text: 'Emptying your hand does not win instantly — each remaining player gets their turn in line to either PASS or CALL BLUFF on your final throw. Survive unchallenged (or prove truth) to claim victory!',
             },
           ].map((item) => {
             const Icon = item.Icon;

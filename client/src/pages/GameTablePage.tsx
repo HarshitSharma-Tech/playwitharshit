@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  AlertTriangle,
-  Check,
   Clock,
   Copy,
   Eye,
@@ -16,12 +14,13 @@ import {
   Send,
   Settings,
   ShieldAlert,
+  SkipForward,
   Sparkles,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react';
-import type { ReactionEmoji } from '@shared/types';
+import { RANKS, type Rank, type ReactionEmoji } from '@shared/types';
 import { useGameStore } from '../store/useGameStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useVoiceStore } from '../store/useVoiceStore';
@@ -62,7 +61,7 @@ export const GameTablePage: React.FC = () => {
     user,
     reactions,
     playCards,
-    acceptClaim,
+    passTurn,
     challengePlay,
     triggerManualDeal,
     sendReaction,
@@ -79,11 +78,12 @@ export const GameTablePage: React.FC = () => {
   const pushToast = useToastStore((s) => s.push);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [declaredRank, setDeclaredRank] = useState<Rank>('A');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [showLog, setShowLog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showYourTurnBanner, setShowYourTurnBanner] = useState(false);
-  const prevPhaseRef = useRef<string | null>(null);
+  const prevTurnKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 250);
@@ -96,18 +96,42 @@ export const GameTablePage: React.FC = () => {
     setSelectedIds((prev) => prev.filter((id) => handSet.has(id)));
   }, [gameState?.myHand]);
 
+  // Default declaredRank to the first card in hand whenever a fresh round starts on your turn
   useEffect(() => {
     if (!gameState) return;
-    const prev = prevPhaseRef.current;
-    prevPhaseRef.current = gameState.phase;
+    if (
+      gameState.phase === 'playing' &&
+      gameState.isFreshRound &&
+      gameState.currentTurnPlayerId === gameState.myPlayerId &&
+      gameState.myHand.length > 0
+    ) {
+      setSelectedIds([]);
+      setDeclaredRank(gameState.myHand[0].rank);
+    }
+  }, [
+    gameState?.roundNumber,
+    gameState?.isFreshRound,
+    gameState?.currentTurnPlayerId,
+    gameState?.myPlayerId,
+    gameState?.phase,
+  ]);
+
+  // Flash a crisp "YOUR TURN" banner whenever line-by-line turn passes to you
+  useEffect(() => {
+    if (!gameState) return;
+    const turnKey = `${gameState.phase}:${gameState.currentTurnPlayerId}:${gameState.roundNumber}:${gameState.pileCount}`;
+    const prevKey = prevTurnKeyRef.current;
+    prevTurnKeyRef.current = turnKey;
+
+    const wasMyTurn = prevKey?.startsWith(`playing:${gameState.myPlayerId}:`) ?? false;
     if (
       gameState.phase === 'playing' &&
       !gameState.isSpectator &&
       gameState.currentTurnPlayerId === gameState.myPlayerId &&
-      (prev === 'dealing' || prev === 'shuffling' || prev === 'challenge_reveal' || prev === null)
+      !wasMyTurn
     ) {
       setShowYourTurnBanner(true);
-      const t = setTimeout(() => setShowYourTurnBanner(false), 1800);
+      const t = setTimeout(() => setShowYourTurnBanner(false), 1400);
       return () => clearTimeout(t);
     }
   }, [
@@ -115,6 +139,8 @@ export const GameTablePage: React.FC = () => {
     gameState?.currentTurnPlayerId,
     gameState?.myPlayerId,
     gameState?.isSpectator,
+    gameState?.roundNumber,
+    gameState?.pileCount,
   ]);
 
   const orderedOpponents = useMemo(() => {
@@ -123,6 +149,14 @@ export const GameTablePage: React.FC = () => {
     if (myIdx < 0) return gameState.players;
     return [...gameState.players.slice(myIdx + 1), ...gameState.players.slice(0, myIdx)];
   }, [gameState]);
+
+  const myHandRanks = useMemo(() => {
+    const set = new Set<Rank>();
+    if (gameState) {
+      for (const c of gameState.myHand) set.add(c.rank);
+    }
+    return set;
+  }, [gameState?.myHand]);
 
   if (!gameState || !user) {
     return (
@@ -137,6 +171,9 @@ export const GameTablePage: React.FC = () => {
   }
 
   const me = gameState.players.find((p) => p.id === gameState.myPlayerId);
+  const activePlayer = gameState.players.find((p) => p.id === gameState.currentTurnPlayerId);
+  const activeSeatNum = activePlayer ? activePlayer.seatIndex + 1 : 1;
+
   const isDealingStage =
     gameState.phase === 'shuffling' ||
     gameState.phase === 'ready_to_deal' ||
@@ -147,22 +184,19 @@ export const GameTablePage: React.FC = () => {
     gameState.phase === 'playing' &&
     gameState.currentTurnPlayerId === gameState.myPlayerId;
 
-  const canRespondToClaim =
-    !gameState.isSpectator &&
-    gameState.phase === 'awaiting_response' &&
+  const isFreshRound = gameState.isFreshRound || gameState.requiredRank === null;
+  const canPlayCards = isMyTurn && !gameState.pendingWinnerId;
+  const canPassOrChallenge =
+    isMyTurn &&
+    !isFreshRound &&
     gameState.lastPlay !== null &&
     gameState.lastPlay.playerId !== gameState.myPlayerId;
 
-  const hasAlreadyAccepted = Boolean(me?.hasAcceptedCurrentPlay);
   const isHost = lobby?.hostId === user.id;
   const maxSelectableCards = gameState.deckCount === 2 ? 6 : 4;
 
-  const activeDeadline =
-    gameState.phase === 'awaiting_response' && gameState.challengeDeadline
-      ? gameState.challengeDeadline
-      : gameState.turnDeadline;
-  const totalWindowSec =
-    gameState.phase === 'awaiting_response' ? 9 : gameState.turnDurationSec;
+  const activeDeadline = gameState.turnDeadline;
+  const totalWindowSec = gameState.turnDurationSec;
   const remainingSec = isDealingStage
     ? gameState.turnDurationSec
     : Math.max(0, Math.ceil((activeDeadline - nowMs) / 1000));
@@ -170,10 +204,14 @@ export const GameTablePage: React.FC = () => {
     ? 100
     : Math.max(0, Math.min(100, ((activeDeadline - nowMs) / (totalWindowSec * 1000)) * 100));
 
+  const activeClaimRank: Rank = isFreshRound
+    ? declaredRank
+    : (gameState.requiredRank as Rank);
+
   const selectedCards = gameState.myHand.filter((c) => selectedIds.includes(c.id));
   const selectionIsBluff =
     selectedCards.length > 0 &&
-    selectedCards.some((c) => c.rank !== gameState.requiredRank);
+    selectedCards.some((c) => c.rank !== activeClaimRank);
 
   const vibrateTap = (ms = 14) => {
     try {
@@ -184,9 +222,10 @@ export const GameTablePage: React.FC = () => {
   };
 
   const toggleCardSelection = (cardId: string) => {
-    if (!isMyTurn) return;
+    if (!canPlayCards) return;
     soundEngine.play('cardSelect');
     vibrateTap(12);
+    const tappedCard = gameState.myHand.find((c) => c.id === cardId);
     setSelectedIds((prev) => {
       if (prev.includes(cardId)) return prev.filter((id) => id !== cardId);
       if (prev.length >= maxSelectableCards) {
@@ -196,17 +235,45 @@ export const GameTablePage: React.FC = () => {
         });
         return prev;
       }
+      // On a fresh round, auto-select the rank of the first card tapped for effortless honest play
+      if (isFreshRound && prev.length === 0 && tappedCard) {
+        setDeclaredRank(tappedCard.rank);
+      }
       return [...prev, cardId];
     });
   };
 
   const handlePlaySelected = async () => {
-    if (!isMyTurn || selectedIds.length === 0 || submitting) return;
+    if (!canPlayCards || selectedIds.length === 0 || submitting) return;
     vibrateTap(22);
     setSubmitting(true);
     try {
-      await playCards(selectedIds);
+      await playCards(selectedIds, isFreshRound ? declaredRank : undefined);
       setSelectedIds([]);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePassTurn = async () => {
+    if (!canPassOrChallenge || submitting) return;
+    vibrateTap(16);
+    setSubmitting(true);
+    try {
+      setSelectedIds([]);
+      await passTurn();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleChallengePlay = async () => {
+    if (!canPassOrChallenge || submitting) return;
+    vibrateTap(30);
+    setSubmitting(true);
+    try {
+      setSelectedIds([]);
+      await challengePlay();
     } finally {
       setSubmitting(false);
     }
@@ -221,7 +288,9 @@ export const GameTablePage: React.FC = () => {
     .reverse()
     .find((r) => r.playerId === gameState.myPlayerId);
 
-  const rankWord = RANK_NAMES[gameState.requiredRank] ?? gameState.requiredRank;
+  const rankWord = gameState.requiredRank
+    ? (RANK_NAMES[gameState.requiredRank] ?? gameState.requiredRank)
+    : 'Any Rank';
 
   return (
     <div className="relative flex min-h-[100dvh] flex-col justify-between bg-[#0B0907] overflow-hidden touch-manipulation">
@@ -269,14 +338,14 @@ export const GameTablePage: React.FC = () => {
             )}
           </div>
 
-          {/* Center: Golden Brass Dealer Medallion (Required Rank) + Timer */}
+          {/* Center: Golden Brass Dealer Medallion (Round Rank) + Timer */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2.5 rounded-xl bg-gradient-to-r from-[#261B0F] via-[#1C140C] to-[#261B0F] border border-[#E6B84C]/65 px-3.5 py-1.5 shadow-[0_0_24px_rgba(230,184,76,0.2)]">
               <span className="font-[var(--font-mono)] text-[10px] font-bold uppercase tracking-widest text-[#D8B974]">
-                DEALER CALLS
+                {isFreshRound ? 'NEW ROUND' : 'ROUND RANK'}
               </span>
               <span className="flex h-7 min-w-7 items-center justify-center rounded-lg bg-gradient-to-b from-[#F5D582] to-[#C89428] px-2 font-[var(--font-display)] text-sm font-black text-[#140E08] shadow">
-                {gameState.requiredRank}
+                {isFreshRound ? 'ANY' : gameState.requiredRank}
               </span>
             </div>
 
@@ -298,11 +367,7 @@ export const GameTablePage: React.FC = () => {
               <div className="hidden sm:block h-1.5 w-16 overflow-hidden rounded-full bg-[#0B0907]">
                 <div
                   className={`h-full transition-all duration-200 ${
-                    gameState.phase === 'awaiting_response'
-                      ? 'bg-[#E1384B]'
-                      : !isDealingStage && remainingSec <= 5
-                        ? 'bg-[#E1384B]'
-                        : 'bg-[#E6B84C]'
+                    !isDealingStage && remainingSec <= 5 ? 'bg-[#E1384B]' : 'bg-[#E6B84C]'
                   }`}
                   style={{ width: `${timerPercent}%` }}
                 />
@@ -428,32 +493,34 @@ export const GameTablePage: React.FC = () => {
             <>
               {/* Status Pill */}
               <div className="z-10 mb-5">
-                {gameState.phase === 'playing' ? (
+                {gameState.phase === 'playing' && (
                   <div
-                    className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-[var(--font-mono)] text-xs font-bold uppercase tracking-wider border shadow-lg ${
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-[var(--font-mono)] text-[11px] sm:text-xs font-bold uppercase tracking-wider border shadow-lg text-center ${
                       isMyTurn
-                        ? 'bg-[#1F160B]/95 border-[#E6B84C] text-[#F6D889]'
+                        ? gameState.pendingWinnerId
+                          ? 'bg-[#3A0E16]/95 border-[#E1384B] text-[#FFC4CB]'
+                          : 'bg-[#1F160B]/95 border-[#E6B84C] text-[#F6D889]'
                         : 'bg-[#091F16]/90 border-[#E6B84C]/30 text-[#D7E6DD]'
                     }`}
                   >
                     <span
-                      className={`h-2 w-2 rounded-full ${
-                        isMyTurn ? 'bg-[#E6B84C] animate-ping' : 'bg-emerald-400'
+                      className={`h-2 w-2 shrink-0 rounded-full ${
+                        isMyTurn
+                          ? gameState.pendingWinnerId
+                            ? 'bg-[#E1384B] animate-ping'
+                            : 'bg-[#E6B84C] animate-ping'
+                          : 'bg-emerald-400'
                       }`}
                     />
                     {isMyTurn
-                      ? `YOUR TURN — CLAIM ${rankWord.toUpperCase()}S`
-                      : `${
-                          gameState.players.find((p) => p.id === gameState.currentTurnPlayerId)
-                            ?.username ?? 'Player'
-                        }'S TURN`}
+                      ? isFreshRound
+                        ? 'YOUR TURN · FRESH ROUND — PICK ANY RANK'
+                        : gameState.pendingWinnerId
+                          ? 'YOUR TURN · FINAL HAND — PASS OR CALL BLUFF'
+                          : `YOUR TURN · PLAY ${rankWord.toUpperCase()}S, PASS, OR CALL BLUFF`
+                      : `SEAT #${activeSeatNum} ${activePlayer?.username ?? 'Player'}'S TURN`}
                   </div>
-                ) : gameState.phase === 'awaiting_response' ? (
-                  <div className="inline-flex items-center gap-2 rounded-full bg-[#3A0E16]/95 border border-[#E1384B] px-4 py-1.5 font-[var(--font-mono)] text-xs font-bold uppercase tracking-wider text-[#FFC4CB] shadow-lg">
-                    <AlertTriangle className="h-3.5 w-3.5 text-[#E1384B]" />
-                    CHALLENGE WINDOW · {remainingSec}s
-                  </div>
-                ) : null}
+                )}
               </div>
 
               {/* Central Discard Pile */}
@@ -513,7 +580,7 @@ export const GameTablePage: React.FC = () => {
                       {gameState.pendingWinnerId && (
                         <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-[#3D1218]/95 border border-[#E6B84C] px-3 py-1 font-[var(--font-mono)] text-[11px] font-bold text-[#F6D889]">
                           <Flame className="h-3.5 w-3.5 text-[#E1384B]" />
-                          FINAL HAND! Call Bluff now or they win!
+                          FINAL HAND! Call Bluff on your turn or they win!
                         </p>
                       )}
                     </motion.div>
@@ -522,10 +589,14 @@ export const GameTablePage: React.FC = () => {
                       key="fresh-table"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="mt-5 text-xs text-[#CBE0D4]"
+                      className="mt-5 text-xs text-[#CBE0D4] text-center"
                     >
-                      Clean felt — place 1 to {maxSelectableCards} cards claiming{' '}
-                      <strong className="text-[#F6D889]">{rankWord}s</strong>.
+                      Fresh round —{' '}
+                      <strong className="text-[#F6D889]">
+                        {isMyTurn ? 'you' : activePlayer?.username ?? 'starter'}
+                      </strong>{' '}
+                      may throw 1 to {maxSelectableCards} cards and declare{' '}
+                      <strong className="text-[#F6D889]">any rank (A–K)</strong>.
                     </motion.p>
                   )}
                 </AnimatePresence>
@@ -648,85 +719,130 @@ export const GameTablePage: React.FC = () => {
               </div>
             )}
 
-            {/* Center: Embossed Casino Action Controls */}
-            <div className="flex flex-wrap items-center justify-center gap-2.5">
-              {isMyTurn && (
-                <>
-                  {selectedIds.length > 0 && (
+            {/* Center: Embossed Casino Action Controls (STRICT LINE-BY-LINE — ONLY ACTIVE ON YOUR TURN) */}
+            <div className="flex flex-col items-center gap-2.5">
+              {/* Fresh-Round 1-Tap Rank Picker: lets you play or bluff ANY rank A–K */}
+              {canPlayCards && isFreshRound && (
+                <div className="flex flex-col items-center gap-1.5 rounded-2xl bg-[#1A130D] border border-[#E6B84C]/35 px-2.5 py-2 shadow-lg max-w-full">
+                  <span className="font-[var(--font-mono)] text-[9px] font-bold uppercase tracking-widest text-[#D8B974]">
+                    DECLARE ANY RANK (DOT = IN YOUR HAND)
+                  </span>
+                  <div className="flex flex-wrap items-center justify-center gap-1">
+                    {RANKS.map((r) => {
+                      const active = declaredRank === r;
+                      const inHand = myHandRanks.has(r);
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => {
+                            vibrateTap(10);
+                            setDeclaredRank(r);
+                          }}
+                          className={`relative flex h-8 min-w-[30px] sm:min-w-[32px] items-center justify-center rounded-lg px-1.5 font-[var(--font-mono)] text-xs font-extrabold transition cursor-pointer ${
+                            active
+                              ? 'bg-gradient-to-b from-[#F5D582] to-[#C89428] text-[#140E08] shadow-[0_0_12px_rgba(230,184,76,0.5)] scale-105'
+                              : inHand
+                                ? 'bg-[#261D15] border border-[#E6B84C]/40 text-[#FAF3E3] hover:border-[#E6B84C]'
+                                : 'bg-[#140F0C] border border-white/10 text-[#968674] hover:text-[#FAF3E3] hover:border-white/25'
+                          }`}
+                          title={
+                            inHand
+                              ? `Declare ${RANK_NAMES[r]} (you have this rank)`
+                              : `Bluff ${RANK_NAMES[r]} (not in your hand)`
+                          }
+                        >
+                          {r}
+                          {inHand && !active && (
+                            <span className="absolute -bottom-0.5 h-1 w-1 rounded-full bg-emerald-400" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {canPlayCards && (
+                  <>
+                    {selectedIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedIds([])}
+                        className="rounded-xl bg-[#1E1712] border border-[#E6B84C]/25 px-3.5 py-2.5 text-xs font-bold text-[#D6C7B2] hover:border-[#E6B84C] cursor-pointer"
+                      >
+                        Clear ({selectedIds.length})
+                      </button>
+                    )}
+
                     <button
                       type="button"
-                      onClick={() => setSelectedIds([])}
-                      className="rounded-xl bg-[#1E1712] border border-[#E6B84C]/25 px-4 py-2.5 text-xs font-bold text-[#D6C7B2] hover:border-[#E6B84C] cursor-pointer"
+                      disabled={selectedIds.length === 0 || submitting}
+                      onClick={handlePlaySelected}
+                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-extrabold uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer ${
+                        selectionIsBluff ? 'crimson-btn' : 'gold-btn'
+                      }`}
                     >
-                      Clear ({selectedIds.length})
+                      <Send className="h-3.5 w-3.5" />
+                      {selectedIds.length === 0
+                        ? `Tap Cards (${activeClaimRank})`
+                        : selectionIsBluff
+                          ? `BLUFF (${selectedIds.length}× ${activeClaimRank})`
+                          : `Play (${selectedIds.length}× ${activeClaimRank})`}
                     </button>
-                  )}
+                  </>
+                )}
 
-                  <button
-                    type="button"
-                    disabled={selectedIds.length === 0 || submitting}
-                    onClick={handlePlaySelected}
-                    className={`flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs font-extrabold uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer ${
-                      selectionIsBluff ? 'crimson-btn' : 'gold-btn'
-                    }`}
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    {selectedIds.length === 0
-                      ? `Select Cards (${gameState.requiredRank})`
-                      : selectionIsBluff
-                        ? `BLUFF (${selectedIds.length}× ${gameState.requiredRank})`
-                        : `Play Cards (${selectedIds.length}× ${gameState.requiredRank})`}
-                  </button>
-                </>
-              )}
+                {canPassOrChallenge && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={handlePassTurn}
+                      className="flex items-center gap-1.5 rounded-xl bg-[#0E4A34] border border-emerald-400/60 px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider text-emerald-200 transition hover:bg-emerald-500 hover:text-[#09150F] disabled:opacity-40 cursor-pointer"
+                      title="Skip your turn — if everyone passes, the pile burns and the last player starts a new round"
+                    >
+                      <SkipForward className="h-3.5 w-3.5" />
+                      Pass
+                    </button>
 
-              {canRespondToClaim && !hasAlreadyAccepted && (
-                <>
-                  <button
-                    type="button"
-                    onClick={acceptClaim}
-                    className="flex items-center gap-2 rounded-xl bg-[#0E4A34] border border-emerald-400/60 px-5 py-2.5 text-xs font-extrabold uppercase tracking-wider text-emerald-200 transition hover:bg-emerald-500 hover:text-[#09150F] cursor-pointer"
-                  >
-                    <Check className="h-4 w-4" />
-                    Accept
-                  </button>
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={handleChallengePlay}
+                      className="crimson-btn flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-extrabold uppercase tracking-wider transition hover:-translate-y-0.5 disabled:opacity-40 cursor-pointer"
+                      title={`Reveal ${gameState.lastPlay?.playerName ?? 'previous'}'s hidden cards`}
+                    >
+                      <ShieldAlert className="h-4 w-4" />
+                      Call Bluff
+                    </button>
+                  </>
+                )}
 
-                  <button
-                    type="button"
-                    onClick={challengePlay}
-                    className="crimson-btn flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs font-extrabold uppercase tracking-wider transition hover:-translate-y-0.5 cursor-pointer"
-                  >
-                    <ShieldAlert className="h-4 w-4" />
-                    Challenge (Call Bluff)
-                  </button>
-                </>
-              )}
-
-              {canRespondToClaim && hasAlreadyAccepted && (
-                <div className="rounded-xl bg-emerald-500/12 border border-emerald-400/35 px-4 py-2 font-[var(--font-mono)] text-xs text-emerald-300">
-                  Accepted — waiting for table ({remainingSec}s)
-                </div>
-              )}
-
-              {isDealingStage && (
-                <div className="rounded-xl bg-[#1A1410] border border-[#E6B84C]/35 px-4 py-2 font-[var(--font-mono)] text-xs text-[#F6D889]">
-                  {gameState.phase === 'shuffling'
-                    ? 'Shuffling deck...'
-                    : gameState.phase === 'ready_to_deal'
-                      ? 'Ready to deal cards...'
-                      : `Receiving cards (${gameState.myHand.length} / ${gameState.cardsPerPlayerTarget})...`}
-                </div>
-              )}
-
-              {!isMyTurn &&
-                !canRespondToClaim &&
-                !isDealingStage &&
-                !gameState.isSpectator &&
-                gameState.phase === 'playing' && (
-                  <div className="rounded-xl bg-[#1A1410] border border-[#E6B84C]/15 px-4 py-2 text-xs text-[#B9A992]">
-                    Waiting for active player to place cards...
+                {isDealingStage && (
+                  <div className="rounded-xl bg-[#1A1410] border border-[#E6B84C]/35 px-4 py-2 font-[var(--font-mono)] text-xs text-[#F6D889]">
+                    {gameState.phase === 'shuffling'
+                      ? 'Shuffling deck...'
+                      : gameState.phase === 'ready_to_deal'
+                        ? 'Ready to deal cards...'
+                        : `Receiving cards (${gameState.myHand.length} / ${gameState.cardsPerPlayerTarget})...`}
                   </div>
                 )}
+
+                {!isMyTurn &&
+                  !isDealingStage &&
+                  !gameState.isSpectator &&
+                  gameState.phase === 'playing' && (
+                    <div className="rounded-xl bg-[#1A1410] border border-[#E6B84C]/20 px-4 py-2 text-xs text-[#B9A992]">
+                      Line-by-line turns · Waiting for{' '}
+                      <strong className="text-[#F6D889]">
+                        {activePlayer?.username ?? 'active player'}
+                      </strong>{' '}
+                      (Seat #{activeSeatNum})...
+                    </div>
+                  )}
+              </div>
             </div>
 
             {/* Right: Emoji Reactions + 1-Click Spicy Hindi Roast */}
@@ -777,7 +893,7 @@ export const GameTablePage: React.FC = () => {
                     const angle = Math.max(-18, Math.min(18, offset * (total > 10 ? 1.8 : 2.6)));
                     const liftY = Math.abs(offset) * (total > 10 ? 1.4 : 2.2);
                     const isSelected = selectedIds.includes(card.id);
-                    const matchesRequired = card.rank === gameState.requiredRank;
+                    const matchesClaim = card.rank === activeClaimRank;
                     const overlapMargin =
                       total > 14
                         ? '-mx-5 sm:-mx-4'
@@ -800,10 +916,10 @@ export const GameTablePage: React.FC = () => {
                         }}
                         className={`relative ${overlapMargin}`}
                       >
-                        {matchesRequired && isMyTurn && (
+                        {matchesClaim && canPlayCards && (
                           <span
                             className="pointer-events-none absolute -top-2.5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-[#E6B84C] px-1.5 py-0.5 font-[var(--font-mono)] text-[8px] font-black text-[#140E08] shadow"
-                            title="Matches required rank"
+                            title={`Matches ${activeClaimRank}`}
                           >
                             MATCH
                           </span>
@@ -812,7 +928,7 @@ export const GameTablePage: React.FC = () => {
                           card={card}
                           size="md"
                           selected={isSelected}
-                          disabled={!isMyTurn}
+                          disabled={!canPlayCards}
                           onClick={() => toggleCardSelection(card.id)}
                         />
                       </motion.div>

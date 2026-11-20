@@ -9,6 +9,7 @@ import type {
   LobbyState,
   MatchHistoryItem,
   QuickPlayStatus,
+  Rank,
   ReactionEmoji,
   ReactionEvent,
   SanitizedGameState,
@@ -94,7 +95,8 @@ interface GameStoreState {
   quickPlayFillBots: () => Promise<void>;
 
   // Core Gameplay Actions
-  playCards: (cardIds: string[]) => Promise<void>;
+  playCards: (cardIds: string[], declaredRank?: Rank) => Promise<void>;
+  passTurn: () => Promise<void>;
   acceptClaim: () => Promise<void>;
   challengePlay: () => Promise<void>;
   sendReaction: (emoji: ReactionEmoji) => void;
@@ -591,20 +593,27 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     }
   },
 
-  playCards: async (cardIds) => {
-    const res = await emitAck<{ ok: boolean; error?: string }>('game:play', { cardIds });
+  playCards: async (cardIds, declaredRank) => {
+    const res = await emitAck<{ ok: boolean; error?: string }>('game:play', {
+      cardIds,
+      declaredRank,
+    });
     if (!res.ok && res.error) {
       useToastStore.getState().push({ type: 'error', message: res.error });
     }
   },
 
-  acceptClaim: async () => {
-    const res = await emitAck<{ ok: boolean; error?: string }>('game:accept');
+  passTurn: async () => {
+    const res = await emitAck<{ ok: boolean; error?: string }>('game:pass');
     if (!res.ok && res.error) {
       useToastStore.getState().push({ type: 'error', message: res.error });
     } else {
       soundEngine.play('click');
     }
+  },
+
+  acceptClaim: async () => {
+    await get().passTurn();
   },
 
   challengePlay: async () => {

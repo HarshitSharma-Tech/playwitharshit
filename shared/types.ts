@@ -159,7 +159,6 @@ export type GamePhase =
   | 'ready_to_deal'
   | 'dealing'
   | 'playing'
-  | 'awaiting_response'
   | 'challenge_reveal'
   | 'finished';
 
@@ -180,7 +179,7 @@ export interface PublicPlayerGameState {
   botPersonality?: BotPersonality;
   connected: boolean;
   cardCount: number;
-  hasAcceptedCurrentPlay: boolean;
+  hasPassedRound: boolean;
   matchStats: PlayerReputation;
   bluffMetrics: ObservedBluffMetrics;
   seatIndex: number;
@@ -242,7 +241,9 @@ export interface SanitizedGameState {
   roomCode: string;
   phase: GamePhase;
   roundNumber: number;
-  requiredRank: Rank;
+  /** Null when starting a fresh round (active player may choose ANY rank A-K) */
+  requiredRank: Rank | null;
+  isFreshRound: boolean;
   currentTurnPlayerId: string;
   pileCount: number;
   deckCount: DeckCountOption;
@@ -253,7 +254,6 @@ export interface SanitizedGameState {
   shuffleSpeed: ShuffleSpeed;
   lastDealEvent: DealEventPublic | null;
   turnDeadline: number;
-  challengeDeadline: number | null;
   turnDurationSec: number;
   lastPlay: LastPlayPublicInfo | null;
   pendingWinnerId: string | null;

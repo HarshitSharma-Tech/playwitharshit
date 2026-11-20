@@ -137,11 +137,12 @@ export const OpponentSeat: React.FC<OpponentSeatProps> = ({
 
             <div className="mt-0.5 flex items-center justify-between gap-1">
               <span className="font-[var(--font-mono)] text-[10px] font-bold text-[#E6B84C]">
-                {player.cardCount} {player.cardCount === 1 ? 'card' : 'cards'}
+                #{player.seatIndex + 1} · {player.cardCount}{' '}
+                {player.cardCount === 1 ? 'card' : 'cards'}
               </span>
-              {player.hasAcceptedCurrentPlay && !isLastActor && (
-                <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/18 px-1.5 py-0.5 font-[var(--font-mono)] text-[8px] font-bold text-emerald-400">
-                  <Check className="h-2.5 w-2.5" /> OK
+              {player.hasPassedRound && !isLastActor && (
+                <span className="inline-flex items-center gap-0.5 rounded bg-white/10 px-1.5 py-0.5 font-[var(--font-mono)] text-[8px] font-bold text-[#DFD2BE]">
+                  <Check className="h-2.5 w-2.5" /> PASS
                 </span>
               )}
               {isCurrentTurn && (

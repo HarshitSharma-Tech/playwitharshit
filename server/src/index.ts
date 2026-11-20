@@ -21,6 +21,7 @@ import type {
   DeckCountOption,
   Difficulty,
   LeaderboardCategory,
+  Rank,
   ReactionEmoji,
   ShuffleSpeed,
   TurnTimerOption,
@@ -249,16 +250,23 @@ io.on('connection', (socket) => {
     cb?.({ ok: true, active });
   });
 
-  socket.on('game:play', (payload: { cardIds: string[] }, cb?: (res: unknown) => void) => {
-    cb?.(roomManager.handlePlayCards(user.id, payload?.cardIds ?? []));
-  });
+  socket.on(
+    'game:play',
+    (payload: { cardIds: string[]; declaredRank?: Rank }, cb?: (res: unknown) => void) => {
+      cb?.(roomManager.handlePlayCards(user.id, payload?.cardIds ?? [], payload?.declaredRank));
+    }
+  );
 
   socket.on('game:trigger_deal', (_payload: unknown, cb?: (res: unknown) => void) => {
     cb?.(roomManager.triggerManualDeal(user.id));
   });
 
+  socket.on('game:pass', (_payload: unknown, cb?: (res: unknown) => void) => {
+    cb?.(roomManager.handlePassTurn(user.id));
+  });
+
   socket.on('game:accept', (_payload: unknown, cb?: (res: unknown) => void) => {
-    cb?.(roomManager.handleAcceptClaim(user.id));
+    cb?.(roomManager.handlePassTurn(user.id));
   });
 
   socket.on('game:challenge', (_payload: unknown, cb?: (res: unknown) => void) => {

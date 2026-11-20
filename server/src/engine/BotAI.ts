@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
-import type {
-  BotPersonality,
-  Card,
-  LastPlayPublicInfo,
-  Rank,
-  ReactionEmoji,
-  VoicePhrase,
+import {
+  RANKS,
+  type BotPersonality,
+  type Card,
+  type LastPlayPublicInfo,
+  type Rank,
+  type ReactionEmoji,
+  type VoicePhrase,
 } from '../../../shared/types.js';
 
 function randFloat(): number {
@@ -16,19 +17,26 @@ function pickRandom<T>(arr: T[]): T {
   return arr[crypto.randomInt(arr.length)];
 }
 
-export interface BotPlayDecision {
-  cardIds: string[];
-  delayMs: number;
-  reaction?: ReactionEmoji;
-  phrase?: VoicePhrase;
-}
-
-export interface BotResponseDecision {
-  action: 'challenge' | 'accept';
-  delayMs: number;
-  reaction?: ReactionEmoji;
-  phrase?: VoicePhrase;
-}
+export type BotTurnDecision =
+  | {
+      action: 'play';
+      cardIds: string[];
+      declaredRank: Rank;
+      delayMs: number;
+      reaction?: ReactionEmoji;
+      phrase?: VoicePhrase;
+    }
+  | {
+      action: 'pass';
+      delayMs: number;
+      reaction?: ReactionEmoji;
+    }
+  | {
+      action: 'challenge';
+      delayMs: number;
+      reaction?: ReactionEmoji;
+      phrase?: VoicePhrase;
+    };
 
 const BOT_PLAY_PHRASES: VoicePhrase[] = [
   'Asli khiladi hoon main!',
@@ -56,191 +64,168 @@ export const BOT_ROSTER: Array<{
   { name: 'Riot-AI', avatar: 'crown', personality: 'aggressive' },
 ];
 
-export function decideBotPlay(params: {
+/**
+ * Line-by-line turn-based Bot AI:
+ * - On a fresh round (requiredRank === null): picks ANY rank (usually its most frequent rank, or bluffs!).
+ * - On an active round: evaluates whether to CHALLENGE the previous play, PLAY matching/bluff cards, or PASS.
+ */
+export function decideBotTurn(params: {
   personality: BotPersonality;
   hand: Card[];
-  requiredRank: Rank;
-  pileCount: number;
-}): BotPlayDecision {
-  const { personality, hand, requiredRank } = params;
-  const matching = hand.filter((c) => c.rank === requiredRank);
-  const nonMatching = hand.filter((c) => c.rank !== requiredRank);
-
-  let chosen: Card[] = [];
-  let reaction: ReactionEmoji | undefined;
-
-  if (matching.length > 0) {
-    // Bot HAS matching cards — decide whether to play truth, pad with a bluff, or bluff anyway
-    switch (personality) {
-      case 'aggressive': {
-        // Often slips an extra non-matching card to shed hand fast
-        chosen = [...matching.slice(0, 3)];
-        if (nonMatching.length > 0 && chosen.length < 3 && randFloat() < 0.35) {
-          chosen.push(pickRandom(nonMatching));
-          if (randFloat() < 0.3) reaction = '😈';
-        }
-        break;
-      }
-      case 'strategic': {
-        // Plays exact matching cards cleanly (up to 3 unless winning)
-        chosen = matching.slice(0, Math.min(4, matching.length));
-        break;
-      }
-      case 'unpredictable': {
-        // Sometimes plays only 1 matching, sometimes mixes in a wild card
-        if (nonMatching.length > 0 && randFloat() < 0.3) {
-          chosen = [matching[0], pickRandom(nonMatching)];
-          if (randFloat() < 0.35) reaction = '🔥';
-        } else {
-          const count = Math.min(matching.length, crypto.randomInt(1, matching.length + 1));
-          chosen = matching.slice(0, count);
-        }
-        break;
-      }
-      case 'defensive':
-      default: {
-        // Safe truthful play
-        chosen = matching.slice(0, Math.min(2, matching.length));
-        break;
-      }
-    }
-  } else {
-    // Bot has NO matching cards -> MUST bluff!
-    switch (personality) {
-      case 'aggressive': {
-        const count = Math.min(hand.length, randFloat() < 0.55 ? 2 : randFloat() < 0.85 ? 1 : 3);
-        chosen = hand.slice(0, Math.max(1, count));
-        if (randFloat() < 0.25) reaction = '😈';
-        break;
-      }
-      case 'strategic': {
-        // Single-card bluffs are much harder to call out mathematically
-        chosen = [pickRandom(hand)];
-        break;
-      }
-      case 'unpredictable': {
-        const count = Math.min(hand.length, crypto.randomInt(1, Math.min(3, hand.length) + 1));
-        chosen = hand.slice(0, count);
-        if (randFloat() < 0.25) reaction = '👀';
-        break;
-      }
-      case 'defensive':
-      default: {
-        chosen = [hand[0]];
-        break;
-      }
-    }
-  }
-
-  // Guarantee valid 1..4 cards
-  if (chosen.length === 0 && hand.length > 0) {
-    chosen = [hand[0]];
-  }
-  chosen = chosen.slice(0, 4);
-
-  const delayMs = 1100 + crypto.randomInt(1400);
-  const phrase = randFloat() < 0.24 ? pickRandom(BOT_PLAY_PHRASES) : undefined;
-  return {
-    cardIds: chosen.map((c) => c.id),
-    delayMs,
-    reaction: phrase ? undefined : reaction,
-    phrase,
-  };
-}
-
-export function decideBotResponse(params: {
-  personality: BotPersonality;
-  botHand: Card[];
-  lastPlay: LastPlayPublicInfo;
-  accusedCardsRemaining: number;
+  requiredRank: Rank | null;
+  lastPlay: LastPlayPublicInfo | null;
+  pendingWinnerId: string | null;
   pileCount: number;
   accusedCaughtBluffs: number;
   deckCount?: 1 | 2;
-}): BotResponseDecision {
+}): BotTurnDecision {
   const {
     personality,
-    botHand,
+    hand,
+    requiredRank,
     lastPlay,
-    accusedCardsRemaining,
+    pendingWinnerId,
     pileCount,
     accusedCaughtBluffs,
     deckCount = 1,
   } = params;
 
-  const maxOfRankInDeck = deckCount * 4;
-  const myCountOfRank = botHand.filter((c) => c.rank === lastPlay.declaredRank).length;
-  const mathematicallyImpossible = myCountOfRank + lastPlay.count > maxOfRankInDeck;
+  const delayMs = 1100 + crypto.randomInt(1300);
 
-  // If mathematically impossible (there are only 4 of any rank in a 52-card deck!),
-  // smart bots almost always catch it!
+  // 1. FRESH ROUND: Bot chooses ANY rank to declare!
+  if (!requiredRank || !lastPlay) {
+    // Group hand by rank to find strong truthful sets
+    const byRank = new Map<Rank, Card[]>();
+    for (const c of hand) {
+      const list = byRank.get(c.rank) ?? [];
+      list.push(c);
+      byRank.set(c.rank, list);
+    }
+    const groups = Array.from(byRank.entries()).sort((a, b) => b[1].length - a[1].length);
+    const best = groups[0];
+
+    let chosenCards: Card[] = best ? best[1].slice(0, 3) : [hand[0]];
+    let declaredRank: Rank = best ? best[0] : hand[0].rank;
+
+    if (personality === 'aggressive' && hand.length >= 2 && randFloat() < 0.35) {
+      const extra = hand.find((c) => !chosenCards.some((ch) => ch.id === c.id));
+      if (extra) chosenCards = [...chosenCards.slice(0, 2), extra];
+    } else if (personality === 'unpredictable' && randFloat() < 0.3) {
+      declaredRank = pickRandom(RANKS);
+      chosenCards = hand.slice(0, Math.min(2, hand.length));
+    }
+
+    const phrase = randFloat() < 0.22 ? pickRandom(BOT_PLAY_PHRASES) : undefined;
+    return {
+      action: 'play',
+      cardIds: chosenCards.slice(0, deckCount === 2 ? 6 : 4).map((c) => c.id),
+      declaredRank,
+      delayMs,
+      phrase,
+      reaction: phrase ? undefined : randFloat() < 0.15 ? '😈' : undefined,
+    };
+  }
+
+  // 2. ACTIVE ROUND: First evaluate whether to CHALLENGE the previous play!
+  const maxOfRankInDeck = deckCount * 4;
+  const matching = hand.filter((c) => c.rank === requiredRank);
+  const nonMatching = hand.filter((c) => c.rank !== requiredRank);
+  const mathematicallyImpossible = matching.length + lastPlay.count > maxOfRankInDeck;
+
   if (mathematicallyImpossible) {
     const catchProb =
-      personality === 'strategic'
-        ? 0.96
-        : personality === 'defensive'
-          ? 0.9
-          : personality === 'aggressive'
-            ? 0.88
-            : 0.72;
+      personality === 'strategic' ? 0.96 : personality === 'defensive' ? 0.9 : 0.85;
     if (randFloat() < catchProb) {
       return {
         action: 'challenge',
-        delayMs: 900 + crypto.randomInt(1200),
-        reaction: '👀',
+        delayMs,
+        phrase: pickRandom(BOT_CHALLENGE_PHRASES),
       };
     }
   }
 
-  // If accused is about to WIN (0 cards left), high urgency to challenge!
-  if (accusedCardsRemaining === 0) {
-    const desperationProb =
+  // If someone just emptied their hand (pendingWinnerId), we MUST either challenge or pass!
+  if (pendingWinnerId) {
+    const callProb =
       personality === 'aggressive'
         ? 0.72
         : personality === 'strategic'
-          ? 0.58 + (myCountOfRank >= 2 ? 0.25 : 0)
+          ? 0.55 + (matching.length >= 2 ? 0.25 : 0)
           : personality === 'unpredictable'
             ? 0.65
             : 0.45;
-    if (randFloat() < desperationProb) {
+    if (randFloat() < callProb) {
       return {
         action: 'challenge',
-        delayMs: 1100 + crypto.randomInt(1500),
-        reaction: '🤔',
+        delayMs,
+        phrase: pickRandom(BOT_CHALLENGE_PHRASES),
       };
     }
+    return { action: 'pass', delayMs };
   }
 
-  // Compute suspicion probability based on personality + public signals
+  // Suspicion check to call bluff
   let suspicion = 0.08;
-  if (lastPlay.count === 2) suspicion += 0.08;
-  if (lastPlay.count === 3) suspicion += 0.24;
-  if (lastPlay.count >= 4) suspicion += 0.45;
-  if (myCountOfRank >= 2) suspicion += 0.14;
+  if (lastPlay.count === 2) suspicion += 0.09;
+  if (lastPlay.count === 3) suspicion += 0.25;
+  if (lastPlay.count >= 4) suspicion += 0.48;
+  if (matching.length >= 2) suspicion += 0.15;
   if (accusedCaughtBluffs > 0) suspicion += Math.min(0.18, accusedCaughtBluffs * 0.07);
-  // Large pile discourages defensive bots from risking picking it up
-  if (pileCount >= 8 && personality === 'defensive') suspicion -= 0.1;
+  if (pileCount >= 8 && personality === 'defensive') suspicion -= 0.12;
 
-  switch (personality) {
-    case 'aggressive':
-      suspicion += 0.14;
-      break;
-    case 'strategic':
-      suspicion += myCountOfRank > 0 ? 0.06 : -0.03;
-      break;
-    case 'unpredictable':
-      suspicion += (randFloat() - 0.35) * 0.32;
-      break;
-    case 'defensive':
-      suspicion -= 0.08;
-      break;
+  if (personality === 'aggressive') suspicion += 0.14;
+  else if (personality === 'unpredictable') suspicion += (randFloat() - 0.35) * 0.3;
+  else if (personality === 'defensive') suspicion -= 0.08;
+
+  if (randFloat() < Math.max(0.03, Math.min(0.82, suspicion))) {
+    return {
+      action: 'challenge',
+      delayMs,
+      phrase: randFloat() < 0.65 ? pickRandom(BOT_CHALLENGE_PHRASES) : undefined,
+      reaction: '👀',
+    };
   }
 
-  const willChallenge = randFloat() < Math.max(0.03, Math.min(0.85, suspicion));
-  const phrase = willChallenge && randFloat() < 0.65 ? pickRandom(BOT_CHALLENGE_PHRASES) : undefined;
+  // 3. Otherwise, decide between PLAYING cards (truth or bluff) vs PASSING
+  if (matching.length > 0) {
+    let chosen = matching.slice(0, Math.min(3, matching.length));
+    if (personality === 'aggressive' && nonMatching.length > 0 && randFloat() < 0.3) {
+      chosen = [...chosen.slice(0, 2), pickRandom(nonMatching)];
+    }
+    return {
+      action: 'play',
+      cardIds: chosen.map((c) => c.id),
+      declaredRank: requiredRank,
+      delayMs,
+      phrase: randFloat() < 0.18 ? pickRandom(BOT_PLAY_PHRASES) : undefined,
+    };
+  }
+
+  // No matching cards -> decide whether to BLUFF or PASS
+  const bluffProb =
+    personality === 'aggressive'
+      ? 0.68
+      : personality === 'unpredictable'
+        ? 0.6
+        : personality === 'strategic'
+          ? 0.42
+          : 0.22;
+
+  if (randFloat() < bluffProb && hand.length > 0) {
+    const count =
+      personality === 'aggressive' && hand.length >= 2 && randFloat() < 0.5 ? 2 : 1;
+    const chosen = hand.slice(0, count);
+    return {
+      action: 'play',
+      cardIds: chosen.map((c) => c.id),
+      declaredRank: requiredRank,
+      delayMs,
+      reaction: randFloat() < 0.25 ? '😈' : undefined,
+    };
+  }
+
   return {
-    action: willChallenge ? 'challenge' : 'accept',
-    delayMs: 1000 + crypto.randomInt(2200),
-    reaction: phrase ? undefined : willChallenge && randFloat() < 0.4 ? '🤔' : undefined,
-    phrase,
+    action: 'pass',
+    delayMs,
   };
 }

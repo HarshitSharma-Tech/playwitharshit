@@ -15,6 +15,7 @@ import {
   type LobbyState,
   type PublicRoomSummary,
   type QuickPlayStatus,
+  type Rank,
   type ReactionEmoji,
   type ReactionEvent,
   type RoomSettings,
@@ -27,7 +28,7 @@ import {
   type VoiceTokenPayload,
 } from '../../../shared/types.js';
 import { BluffEngine } from '../engine/BluffEngine.js';
-import { BOT_ROSTER, decideBotPlay, decideBotResponse } from '../engine/BotAI.js';
+import { BOT_ROSTER, decideBotTurn } from '../engine/BotAI.js';
 import {
   getTotalBluffsCaughtCount,
   getTotalMatchesCount,
@@ -946,105 +947,78 @@ export class RoomManager {
     const engine = room.engine;
     if (!engine) return;
 
-    const phase = engine.getPhase();
-    if (phase === 'playing') {
-      const current = engine.getCurrentTurnPlayer();
-      if (!current.isBot) return;
+    if (engine.getPhase() !== 'playing') return;
+    const current = engine.getCurrentTurnPlayer();
+    if (!current.isBot) return;
 
-      const decision = decideBotPlay({
-        personality: current.botPersonality ?? 'strategic',
-        hand: engine.getPlayerHandInternal(current.id),
-        requiredRank: engine.getRequiredRank(),
-        pileCount: engine.getPileCount(),
-      });
+    const lastPlay = engine.getLastPlayPublic();
+    const stateView = engine.getSanitizedStateForRecipient(current.id);
+    const accusedCaughtBluffs = lastPlay
+      ? (stateView.players.find((p) => p.id === lastPlay.playerId)?.bluffMetrics.caughtBluffs ?? 0)
+      : 0;
 
-      const timer = setTimeout(() => {
-        room.botTimers.delete(timer);
-        if (!room.engine || room.engine.getPhase() !== 'playing') return;
-        if (room.engine.getCurrentTurnPlayer().id !== current.id) return;
-        if (decision.phrase) {
-          this.io.to(this.roomChannel(room.code)).emit('room:reaction', {
-            id: `bvp_${Date.now()}_${crypto.randomInt(10000)}`,
-            roomCode: room.code,
-            playerId: current.id,
-            username: current.username,
-            phrase: decision.phrase,
-            timestamp: Date.now(),
-          });
-        } else if (decision.reaction) {
-          this.emitReaction(room, current.id, current.username, decision.reaction);
-        }
-        room.engine.playCards(current.id, decision.cardIds);
-      }, decision.delayMs);
-      room.botTimers.add(timer);
-    } else if (phase === 'awaiting_response') {
-      const lastPlay = engine.getLastPlayPublic();
-      if (!lastPlay) return;
-      const meta = engine.getPlayersMeta();
-      const accusedMeta = meta.find((m) => m.id === lastPlay.playerId);
-      const accusedState = engine
-        .getSanitizedStateForRecipient(lastPlay.playerId)
-        .players.find((p) => p.id === lastPlay.playerId);
+    const decision = decideBotTurn({
+      personality: current.botPersonality ?? 'strategic',
+      hand: engine.getPlayerHandInternal(current.id),
+      requiredRank: engine.getRequiredRank(),
+      lastPlay,
+      pendingWinnerId: stateView.pendingWinnerId,
+      pileCount: engine.getPileCount(),
+      accusedCaughtBluffs,
+      deckCount: engine.deckCount,
+    });
 
-      for (const bot of meta) {
-        if (!bot.isBot || bot.id === lastPlay.playerId || bot.hasAcceptedCurrentPlay) continue;
+    const timer = setTimeout(() => {
+      room.botTimers.delete(timer);
+      if (!room.engine || room.engine.getPhase() !== 'playing') return;
+      if (room.engine.getCurrentTurnPlayer().id !== current.id) return;
 
-        const decision = decideBotResponse({
-          personality: bot.botPersonality ?? 'strategic',
-          botHand: engine.getPlayerHandInternal(bot.id),
-          lastPlay,
-          accusedCardsRemaining: accusedMeta?.cardCount ?? 1,
-          pileCount: engine.getPileCount(),
-          accusedCaughtBluffs: accusedState?.bluffMetrics.caughtBluffs ?? 0,
-          deckCount: engine.deckCount,
+      if ('phrase' in decision && decision.phrase) {
+        this.io.to(this.roomChannel(room.code)).emit('room:reaction', {
+          id: `bvp_${Date.now()}_${crypto.randomInt(10000)}`,
+          roomCode: room.code,
+          playerId: current.id,
+          username: current.username,
+          phrase: decision.phrase,
+          timestamp: Date.now(),
         });
-
-        const timer = setTimeout(() => {
-          room.botTimers.delete(timer);
-          if (!room.engine || room.engine.getPhase() !== 'awaiting_response') return;
-          const activeLastPlay = room.engine.getLastPlayPublic();
-          if (!activeLastPlay || activeLastPlay.playId !== lastPlay.playId) return;
-
-          if (decision.phrase) {
-            this.io.to(this.roomChannel(room.code)).emit('room:reaction', {
-              id: `bvp_${Date.now()}_${crypto.randomInt(10000)}`,
-              roomCode: room.code,
-              playerId: bot.id,
-              username: bot.username,
-              phrase: decision.phrase,
-              timestamp: Date.now(),
-            });
-          } else if (decision.reaction) {
-            this.emitReaction(room, bot.id, bot.username, decision.reaction);
-          }
-          if (decision.action === 'challenge') {
-            room.engine.challengePlay(bot.id);
-          } else {
-            room.engine.acceptClaim(bot.id);
-          }
-        }, decision.delayMs);
-        room.botTimers.add(timer);
+      } else if (decision.reaction) {
+        this.emitReaction(room, current.id, current.username, decision.reaction);
       }
-    }
+
+      if (decision.action === 'play') {
+        room.engine.playCards(current.id, decision.cardIds, decision.declaredRank);
+      } else if (decision.action === 'challenge') {
+        room.engine.challengePlay(current.id);
+      } else {
+        room.engine.passTurn(current.id);
+      }
+    }, decision.delayMs);
+    room.botTimers.add(timer);
   }
 
   public handlePlayCards(
     userId: string,
-    cardIds: string[]
+    cardIds: string[],
+    declaredRank?: Rank
   ): { ok: true } | { ok: false; error: string } {
     const code = this.userToRoom.get(userId);
     if (!code) return { ok: false, error: 'You are not in an active room.' };
     const room = this.rooms.get(code);
     if (!room?.engine) return { ok: false, error: 'Game has not started.' };
-    return room.engine.playCards(userId, cardIds);
+    return room.engine.playCards(userId, cardIds, declaredRank);
   }
 
-  public handleAcceptClaim(userId: string): { ok: true } | { ok: false; error: string } {
+  public handlePassTurn(userId: string): { ok: true } | { ok: false; error: string } {
     const code = this.userToRoom.get(userId);
     if (!code) return { ok: false, error: 'You are not in an active room.' };
     const room = this.rooms.get(code);
     if (!room?.engine) return { ok: false, error: 'Game has not started.' };
-    return room.engine.acceptClaim(userId);
+    return room.engine.passTurn(userId);
+  }
+
+  public handleAcceptClaim(userId: string): { ok: true } | { ok: false; error: string } {
+    return this.handlePassTurn(userId);
   }
 
   public handleChallenge(userId: string): { ok: true } | { ok: false; error: string } {

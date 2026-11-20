@@ -35,7 +35,7 @@ export interface EnginePlayerInit {
 
 interface InternalPlayer extends EnginePlayerInit {
   hand: Card[];
-  hasAcceptedCurrentPlay: boolean;
+  hasPassedRound: boolean;
   matchStats: PlayerReputation;
   observed: {
     totalPlays: number;
@@ -74,7 +74,6 @@ export interface EngineCallbacks {
   ) => void;
 }
 
-export const CHALLENGE_WINDOW_MS = 9000;
 export const CHALLENGE_REVEAL_MS = 4000;
 
 const SHUFFLE_DURATION_MS: Record<ShuffleSpeed, number> = {
@@ -89,10 +88,6 @@ const DEAL_CARD_INTERVAL_MS: Record<ShuffleSpeed, number> = {
   fast: 70,
 };
 
-/**
- * Creates 1 or 2 standard 52-card decks with globally unique physical card IDs
- * and performs a cryptographically secure Fisher-Yates shuffle on the backend.
- */
 export function createShuffledDeck(deckCount: DeckCountOption = 1): Card[] {
   const deck: Card[] = [];
   const totalDecks: Array<1 | 2> = deckCount === 2 ? [1, 2] : [1];
@@ -158,6 +153,15 @@ function computeObservedBluffMetrics(obs: InternalPlayer['observed']): ObservedB
   };
 }
 
+/**
+ * Authoritative Turn-by-Turn ("Line-by-Line") Classic Bluff Engine:
+ * - Strict clockwise turns: players can NEVER interrupt out of turn.
+ * - Fresh round (pileCount === 0): active player chooses ANY rank (A-K) to declare and plays 1+ cards.
+ * - Active round (pileCount > 0): on your turn, you may PLAY cards claiming the current rank,
+ *   PASS your turn, or CALL BLUFF (CHALLENGE) on the previous play.
+ * - If all other players PASS around to the last player who placed cards, the pile is cleared
+ *   and that player starts a NEW round with any rank (or WINS if they have 0 cards!).
+ */
 export class BluffEngine {
   public readonly roomCode: string;
   public readonly turnDurationSec: number;
@@ -169,12 +173,12 @@ export class BluffEngine {
 
   private phase: GamePhase = 'shuffling';
   private roundNumber = 1;
-  private requiredRankIndex = 0; // Starts at 'A'
+  /** Null at the start of any fresh round — active player chooses ANY rank (A-K). */
+  private activeRank: Rank | null = null;
   private currentTurnIndex = 0;
   private players: InternalPlayer[] = [];
   private spectators: SpectatorInfo[] = [];
 
-  // Server-only undealt shuffled deck (NEVER exposed to clients)
   private undealtDeck: Card[] = [];
   private totalCardsToDeal = 0;
   private dealtCardsSoFar = 0;
@@ -189,7 +193,6 @@ export class BluffEngine {
   private winner: MatchWinnerInfo | null = null;
   private logs: GameLogEntry[] = [];
   private turnDeadline = 0;
-  private challengeDeadline: number | null = null;
   private startedAt = Date.now();
   private timers: Set<ReturnType<typeof setTimeout>> = new Set();
   private callbacks: EngineCallbacks;
@@ -210,7 +213,6 @@ export class BluffEngine {
     turnDurationSec: number;
     callbacks: EngineCallbacks;
     enableTimers?: boolean;
-    /** Skip shuffle/deal delays in synchronous unit tests when true */
     instantDeal?: boolean;
   }) {
     if (params.players.length < 2 || params.players.length > 6) {
@@ -241,14 +243,12 @@ export class BluffEngine {
 
     this.cardsPerPlayerTarget = requested <= 0 ? maxPerPlayer : requested;
     this.totalCardsToDeal = this.cardsPerPlayerTarget * playerCount;
-
-    // Server-side cryptographic shuffle of 1 or 2 complete decks
     this.undealtDeck = createShuffledDeck(this.deckCount);
 
     this.players = params.players.map((p, idx) => ({
       ...p,
       hand: [],
-      hasAcceptedCurrentPlay: false,
+      hasPassedRound: false,
       matchStats: {
         successfulBluffs: 0,
         failedBluffs: 0,
@@ -267,7 +267,6 @@ export class BluffEngine {
       wonWithFinalBluff: false,
     }));
 
-    // Determine starting seat before play begins
     if (this.firstPlayerMode === 'host_selected' && this.firstPlayerId) {
       const chosenIdx = this.players.findIndex((p) => p.id === this.firstPlayerId);
       this.currentTurnIndex = chosenIdx >= 0 ? chosenIdx : crypto.randomInt(this.players.length);
@@ -297,9 +296,7 @@ export class BluffEngine {
 
   public destroy(): void {
     this.dealInProgress = false;
-    for (const t of this.timers) {
-      clearTimeout(t);
-    }
+    for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
   }
 
@@ -329,9 +326,6 @@ export class BluffEngine {
     }
   }
 
-  /**
-   * Transitions from `shuffling` into either `dealing` (automatic) or `ready_to_deal` (manual).
-   */
   public onShuffleComplete(): void {
     if (this.phase !== 'shuffling') return;
     if (this.distributionMode === 'manual') {
@@ -343,9 +337,6 @@ export class BluffEngine {
     }
   }
 
-  /**
-   * Starts clockwise one-by-one distribution. Guards against duplicate starts.
-   */
   public beginDealing(): { ok: true } | { ok: false; error: string } {
     if (this.dealInProgress) {
       return { ok: false, error: 'Card distribution is already in progress.' };
@@ -379,10 +370,6 @@ export class BluffEngine {
     }, stepMs);
   }
 
-  /**
-   * Deals a single physical card from the server's undealt deck to the next clockwise seat.
-   * Returns true once all target cards have been dealt.
-   */
   public dealOneCardStep(): boolean {
     if (this.phase !== 'dealing') return true;
     if (this.dealtCardsSoFar >= this.totalCardsToDeal || this.undealtDeck.length === 0) {
@@ -424,15 +411,17 @@ export class BluffEngine {
     this.dealInProgress = false;
     for (const p of this.players) {
       p.hand = sortHand(p.hand);
+      p.hasPassedRound = false;
     }
+    this.activeRank = null; // Fresh round: first player picks ANY rank!
     this.phase = 'playing';
     this.startedAt = Date.now();
     const starter = this.getCurrentTurnPlayer();
     const remaining = this.undealtDeck.length;
     this.pushLog(
       'system',
-      `Dealing complete! ${starter.username} starts Round 1 (Required rank: A).${
-        remaining > 0 ? ` ${remaining} undealt cards remain in reserve.` : ''
+      `Dealing complete! ${starter.username} starts Round 1 and can choose ANY rank.${
+        remaining > 0 ? ` ${remaining} undealt cards remain in shoe.` : ''
       }`
     );
     this.startTurnTimer();
@@ -455,8 +444,12 @@ export class BluffEngine {
     return this.phase;
   }
 
-  public getRequiredRank(): Rank {
-    return RANKS[this.requiredRankIndex];
+  public getRequiredRank(): Rank | null {
+    return this.activeRank;
+  }
+
+  public isFreshRound(): boolean {
+    return this.activeRank === null || this.discardPile.length === 0;
   }
 
   public getCurrentTurnPlayer(): InternalPlayer {
@@ -494,7 +487,7 @@ export class BluffEngine {
     isBot: boolean;
     botPersonality?: BotPersonality;
     cardCount: number;
-    hasAcceptedCurrentPlay: boolean;
+    hasPassedRound: boolean;
   }> {
     return this.players.map((p) => ({
       id: p.id,
@@ -502,7 +495,7 @@ export class BluffEngine {
       isBot: p.isBot,
       botPersonality: p.botPersonality,
       cardCount: p.hand.length,
-      hasAcceptedCurrentPlay: p.hasAcceptedCurrentPlay,
+      hasPassedRound: p.hasPassedRound,
     }));
   }
 
@@ -518,59 +511,75 @@ export class BluffEngine {
     this.spectators = [...spectators];
   }
 
-  public isPlayerInMatch(playerId: string): boolean {
-    return this.players.some((p) => p.id === playerId);
-  }
-
   private startTurnTimer(): void {
     this.clearAllTimers();
-    this.challengeDeadline = null;
     this.turnDeadline = Date.now() + this.turnDurationSec * 1000;
     if (!this.enableTimers) return;
 
     this.schedule(() => {
       if (this.phase !== 'playing') return;
-      this.autoPlayForCurrentPlayer();
+      this.autoActForCurrentPlayer();
     }, this.turnDurationSec * 1000);
   }
 
-  private startChallengeTimer(): void {
-    this.clearAllTimers();
-    this.challengeDeadline = Date.now() + CHALLENGE_WINDOW_MS;
-    if (!this.enableTimers) return;
-
-    this.schedule(() => {
-      if (this.phase !== 'awaiting_response') return;
-      this.finalizeUnchallengedPlay();
-    }, CHALLENGE_WINDOW_MS);
-  }
-
-  public autoPlayForCurrentPlayer(): void {
+  public autoActForCurrentPlayer(): void {
     if (this.phase !== 'playing') return;
     const player = this.getCurrentTurnPlayer();
-    if (player.hand.length === 0) return;
-
-    const reqRank = this.getRequiredRank();
-    const matching = player.hand.find((c) => c.rank === reqRank);
-    const cardToPlay = matching ?? player.hand[0];
-    this.pushLog('system', `${player.username} ran out of time and auto-played 1 card.`);
-    this.playCards(player.id, [cardToPlay.id]);
+    if (this.isFreshRound()) {
+      if (player.hand.length === 0) return;
+      const card = player.hand[0];
+      this.pushLog('system', `${player.username} timed out and auto-started with 1× ${card.rank}.`);
+      this.playCards(player.id, [card.id], card.rank);
+    } else {
+      this.pushLog('system', `${player.username} timed out and auto-passed.`);
+      this.passTurn(player.id);
+    }
   }
 
+  /**
+   * Credits the previous unchallenged bluff (if any) once play moves on without challenge.
+   */
+  private creditPreviousUnchallengedBluff(): void {
+    if (!this.lastHiddenPlay || !this.lastHiddenPlay.wasBluff) return;
+    const actor = this.players.find((p) => p.id === this.lastHiddenPlay!.playerId);
+    if (!actor) return;
+    actor.matchStats.successfulBluffs += 1;
+    if (this.lastHiddenPlay.cards.length >= 3) {
+      actor.riskTakerEarned = true;
+    }
+    if (this.pendingWinnerId === actor.id) {
+      actor.wonWithFinalBluff = true;
+    }
+  }
+
+  /**
+   * Line-by-line turn play:
+   * - Strictly validates it is `playerId`'s turn.
+   * - On a fresh round, player may choose ANY rank (`declaredRank`) to start the round!
+   * - On an active round, cards are declared as `this.activeRank`.
+   */
   public playCards(
     playerId: string,
-    cardIds: string[]
+    cardIds: string[],
+    declaredRankInput?: Rank
   ): { ok: true } | { ok: false; error: string } {
     if (this.phase !== 'playing') {
       return { ok: false, error: 'Cannot play cards right now.' };
     }
     const current = this.getCurrentTurnPlayer();
     if (current.id !== playerId) {
-      return { ok: false, error: 'It is not your turn.' };
+      return { ok: false, error: 'Wait for your turn — you cannot interrupt another player!' };
     }
+    if (this.pendingWinnerId) {
+      return {
+        ok: false,
+        error: 'A player emptied their hand! On your turn, either PASS or CALL BLUFF.',
+      };
+    }
+
     const maxPlayable = this.deckCount === 2 ? 6 : 4;
     if (!Array.isArray(cardIds) || cardIds.length < 1 || cardIds.length > maxPlayable) {
-      return { ok: false, error: `You must play between 1 and ${maxPlayable} cards.` };
+      return { ok: false, error: `You must select between 1 and ${maxPlayable} cards.` };
     }
     const uniqueIds = new Set(cardIds);
     if (uniqueIds.size !== cardIds.length) {
@@ -586,15 +595,33 @@ export class BluffEngine {
       playedCards.push(card);
     }
 
+    let declaredRank: Rank;
+    if (this.isFreshRound()) {
+      const candidate = declaredRankInput ?? playedCards[0].rank;
+      if (!RANKS.includes(candidate)) {
+        return { ok: false, error: 'Choose a valid card rank (A–K) to start the round.' };
+      }
+      declaredRank = candidate;
+      this.activeRank = declaredRank;
+      for (const p of this.players) p.hasPassedRound = false;
+    } else {
+      // Previous play went unchallenged because current player chose to play on top of it
+      this.creditPreviousUnchallengedBluff();
+      declaredRank = this.activeRank!;
+    }
+
+    // Remove played cards from player's hand & add to center pile
     current.hand = current.hand.filter((c) => !uniqueIds.has(c.id));
     this.discardPile.push(...playedCards);
 
-    const declaredRank = this.getRequiredRank();
     const wasBluff = playedCards.some((c) => c.rank !== declaredRank);
-
     current.observed.totalPlays += 1;
     if (playedCards.length >= 2) {
       current.observed.boldPlays += 1;
+    }
+    // Reset passes whenever fresh cards are thrown so everyone gets their next chance in line
+    for (const p of this.players) {
+      p.hasPassedRound = false;
     }
 
     this.lastHiddenPlay = {
@@ -607,13 +634,9 @@ export class BluffEngine {
       timestamp: Date.now(),
     };
 
-    for (const p of this.players) {
-      p.hasAcceptedCurrentPlay = p.id === current.id;
-    }
-
+    // Track if this player emptied their hand — must survive clockwise passes/challenges to win!
     this.pendingWinnerId = current.hand.length === 0 ? current.id : null;
     this.challengeResult = null;
-    this.phase = 'awaiting_response';
 
     const plural = playedCards.length === 1 ? '' : 's';
     this.pushLog(
@@ -623,74 +646,105 @@ export class BluffEngine {
       }.`
     );
 
-    this.startChallengeTimer();
+    // Move strictly clockwise line-by-line to the next player!
+    this.advanceToNextActiveSeat();
+    this.startTurnTimer();
     this.callbacks.onStateChanged();
     return { ok: true };
   }
 
-  public acceptClaim(playerId: string): { ok: true } | { ok: false; error: string } {
-    if (this.phase !== 'awaiting_response' || !this.lastHiddenPlay) {
-      return { ok: false, error: 'There is no active claim to accept.' };
+  /**
+   * Line-by-line PASS on your own turn:
+   * - Strictly validates it is `playerId`'s turn.
+   * - If everyone else passes all the way back to the last player who placed cards,
+   *   the pile is cleared and that player starts a NEW round choosing ANY rank (or WINS if 0 cards left!).
+   */
+  public passTurn(playerId: string): { ok: true } | { ok: false; error: string } {
+    if (this.phase !== 'playing') {
+      return { ok: false, error: 'Cannot pass right now.' };
     }
-    if (this.lastHiddenPlay.playerId === playerId) {
-      return { ok: false, error: 'You cannot accept your own play.' };
+    const current = this.getCurrentTurnPlayer();
+    if (current.id !== playerId) {
+      return { ok: false, error: 'Wait for your turn — you cannot act out of turn!' };
     }
-    const player = this.players.find((p) => p.id === playerId);
-    if (!player) {
-      return { ok: false, error: 'Player not found in this match.' };
+    if (this.isFreshRound() || !this.lastHiddenPlay) {
+      return {
+        ok: false,
+        error: 'You are starting a new round — select at least 1 card and pick any rank!',
+      };
     }
-    if (player.hasAcceptedCurrentPlay) {
+
+    current.hasPassedRound = true;
+    this.pushLog('accept', `${current.username} passed.`);
+
+    // Check if every player OTHER than the last actor has now passed
+    const lastActorId = this.lastHiddenPlay.playerId;
+    const allOthersPassed = this.players.every(
+      (p) => p.id === lastActorId || p.hasPassedRound
+    );
+
+    if (allOthersPassed) {
+      this.creditPreviousUnchallengedBluff();
+
+      // Did the pending winner survive unchallenged all the way around?
+      if (this.pendingWinnerId) {
+        this.completeMatch(this.pendingWinnerId);
+        return { ok: true };
+      }
+
+      // Burn/clear the center pile and give the last actor a fresh round with ANY rank!
+      const lastActorIdx = this.players.findIndex((p) => p.id === lastActorId);
+      const actorName = this.players[lastActorIdx]?.username ?? 'Player';
+      const clearedCount = this.discardPile.length;
+
+      this.discardPile = [];
+      this.lastHiddenPlay = null;
+      this.activeRank = null;
+      this.roundNumber += 1;
+      for (const p of this.players) p.hasPassedRound = false;
+      this.currentTurnIndex = lastActorIdx >= 0 ? lastActorIdx : (this.currentTurnIndex + 1) % this.players.length;
+
+      this.pushLog(
+        'system',
+        `Everyone passed! ${clearedCount} cards cleared. ${actorName} starts Round ${this.roundNumber} with ANY rank!`
+      );
+      this.startTurnTimer();
+      this.callbacks.onStateChanged();
       return { ok: true };
     }
 
-    player.hasAcceptedCurrentPlay = true;
-
-    const allAccepted = this.players.every((p) => p.hasAcceptedCurrentPlay);
-    if (allAccepted) {
-      this.finalizeUnchallengedPlay();
-    } else {
-      this.callbacks.onStateChanged();
-    }
+    this.advanceToNextActiveSeat();
+    this.startTurnTimer();
+    this.callbacks.onStateChanged();
     return { ok: true };
   }
 
-  public finalizeUnchallengedPlay(): void {
-    if (this.phase !== 'awaiting_response' || !this.lastHiddenPlay) return;
-    this.clearAllTimers();
-
-    const actor = this.players.find((p) => p.id === this.lastHiddenPlay!.playerId);
-    if (actor && this.lastHiddenPlay.wasBluff) {
-      actor.matchStats.successfulBluffs += 1;
-      if (this.lastHiddenPlay.cards.length >= 3) {
-        actor.riskTakerEarned = true;
-      }
-      if (this.pendingWinnerId === actor.id) {
-        actor.wonWithFinalBluff = true;
-      }
-    }
-
-    if (this.pendingWinnerId) {
-      this.completeMatch(this.pendingWinnerId);
-      return;
-    }
-
-    this.advanceTurnAndRank();
-    this.phase = 'playing';
-    this.startTurnTimer();
-    this.callbacks.onStateChanged();
-  }
-
+  /**
+   * Line-by-line CHALLENGE (CALL BLUFF):
+   * - Strictly allowed ONLY on `challengerId`'s own turn (cannot interrupt another player's chance!).
+   */
   public challengePlay(challengerId: string): { ok: true } | { ok: false; error: string } {
-    if (this.phase !== 'awaiting_response' || !this.lastHiddenPlay) {
-      return { ok: false, error: 'No active play to challenge.' };
+    if (this.phase !== 'playing') {
+      return { ok: false, error: 'Cannot challenge right now.' };
+    }
+    const current = this.getCurrentTurnPlayer();
+    if (current.id !== challengerId) {
+      return {
+        ok: false,
+        error: 'Wait for your turn — you can only Call Bluff on your own chance!',
+      };
+    }
+    if (!this.lastHiddenPlay || this.discardPile.length === 0) {
+      return { ok: false, error: 'There is no play to challenge yet.' };
     }
     if (this.lastHiddenPlay.playerId === challengerId) {
       return { ok: false, error: 'You cannot challenge your own play.' };
     }
-    const challenger = this.players.find((p) => p.id === challengerId);
+
+    const challenger = current;
     const accused = this.players.find((p) => p.id === this.lastHiddenPlay!.playerId);
-    if (!challenger || !accused) {
-      return { ok: false, error: 'Invalid challenger.' };
+    if (!accused) {
+      return { ok: false, error: 'Accused player not found.' };
     }
 
     this.clearAllTimers();
@@ -743,12 +797,12 @@ export class BluffEngine {
     };
 
     this.phase = 'challenge_reveal';
-    this.challengeDeadline = null;
     this.callbacks.onStateChanged();
 
+    const nextStarterId = wasBluff ? challenger.id : accused.id;
     const resolveReveal = () => {
       if (this.phase !== 'challenge_reveal') return;
-      this.resolveAfterChallengeReveal(wasBluff ? challenger.id : accused.id);
+      this.resolveAfterChallengeReveal(nextStarterId);
     };
 
     if (this.enableTimers) {
@@ -769,19 +823,22 @@ export class BluffEngine {
 
     this.lastHiddenPlay = null;
     this.challengeResult = null;
+    this.activeRank = null; // Fresh round — winner of challenge picks ANY rank!
     this.roundNumber += 1;
-    this.requiredRankIndex = (this.requiredRankIndex + 1) % RANKS.length;
+    for (const p of this.players) p.hasPassedRound = false;
 
     if (nextStarterId) {
       const idx = this.players.findIndex((p) => p.id === nextStarterId);
-      if (idx >= 0) {
-        this.currentTurnIndex = idx;
-      } else {
-        this.currentTurnIndex = (this.currentTurnIndex + 1) % this.players.length;
-      }
+      this.currentTurnIndex = idx >= 0 ? idx : (this.currentTurnIndex + 1) % this.players.length;
     } else {
       this.currentTurnIndex = (this.currentTurnIndex + 1) % this.players.length;
     }
+
+    const starter = this.getCurrentTurnPlayer();
+    this.pushLog(
+      'system',
+      `New Round ${this.roundNumber}! ${starter.username} can throw cards and choose ANY rank.`
+    );
 
     this.phase = 'playing';
     this.startTurnTimer();
@@ -789,18 +846,22 @@ export class BluffEngine {
     this.callbacks.onChallengeRevealComplete(null);
   }
 
-  private advanceTurnAndRank(): void {
-    this.currentTurnIndex = (this.currentTurnIndex + 1) % this.players.length;
-    this.requiredRankIndex = (this.requiredRankIndex + 1) % RANKS.length;
-    if (this.currentTurnIndex === 0) {
-      this.roundNumber += 1;
+  private advanceToNextActiveSeat(): void {
+    const total = this.players.length;
+    for (let step = 1; step <= total; step++) {
+      const idx = (this.currentTurnIndex + step) % total;
+      const candidate = this.players[idx];
+      if (!candidate.hasPassedRound && candidate.id !== this.pendingWinnerId) {
+        this.currentTurnIndex = idx;
+        return;
+      }
     }
+    this.currentTurnIndex = (this.currentTurnIndex + 1) % total;
   }
 
   private completeMatch(winnerId: string): void {
     this.clearAllTimers();
     this.phase = 'finished';
-    this.challengeDeadline = null;
     const winnerPlayer = this.players.find((p) => p.id === winnerId) ?? this.players[0];
     const durationSec = Math.max(1, Math.round((Date.now() - this.startedAt) / 1000));
 
@@ -814,12 +875,8 @@ export class BluffEngine {
       if (p.matchStats.correctChallenges >= 3 && p.matchStats.wrongChallenges === 0) {
         unlocked.push('perfect_detective');
       }
-      if (won && p.survivedFinalChallenge) {
-        unlocked.push('last_card_standing');
-      }
-      if (won && p.wonWithFinalBluff) {
-        unlocked.push('unbelievable_bluff');
-      }
+      if (won && p.survivedFinalChallenge) unlocked.push('last_card_standing');
+      if (won && p.wonWithFinalBluff) unlocked.push('unbelievable_bluff');
       if (won && p.matchStats.failedBluffs === 0 && p.matchStats.wrongChallenges === 0) {
         unlocked.push('ice_cold');
       }
@@ -875,7 +932,7 @@ export class BluffEngine {
       botPersonality: p.botPersonality,
       connected: p.connected,
       cardCount: p.hand.length,
-      hasAcceptedCurrentPlay: p.hasAcceptedCurrentPlay,
+      hasPassedRound: p.hasPassedRound,
       matchStats: { ...p.matchStats },
       bluffMetrics: computeObservedBluffMetrics(p.observed),
       seatIndex: p.seatIndex,
@@ -885,7 +942,8 @@ export class BluffEngine {
       roomCode: this.roomCode,
       phase: this.phase,
       roundNumber: this.roundNumber,
-      requiredRank: this.getRequiredRank(),
+      requiredRank: this.activeRank,
+      isFreshRound: this.isFreshRound(),
       currentTurnPlayerId: this.getCurrentTurnPlayer().id,
       pileCount: this.discardPile.length,
       deckCount: this.deckCount,
@@ -896,7 +954,6 @@ export class BluffEngine {
       shuffleSpeed: this.shuffleSpeed,
       lastDealEvent: this.lastDealEvent ? { ...this.lastDealEvent } : null,
       turnDeadline: this.turnDeadline,
-      challengeDeadline: this.challengeDeadline,
       turnDurationSec: this.turnDurationSec,
       lastPlay: this.getLastPlayPublic(),
       pendingWinnerId: this.pendingWinnerId,
