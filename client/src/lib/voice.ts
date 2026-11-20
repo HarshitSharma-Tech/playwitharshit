@@ -11,21 +11,31 @@ export interface VoiceCallbacks {
   onMicState: (micEnabled: boolean, muted: boolean) => void;
   onConnectedPeers: (count: number) => void;
   onAutoplayBlocked: (blocked: boolean) => void;
+  onIceFailure: (failed: boolean) => void;
+}
+
+interface PeerEntry {
+  pc: RTCPeerConnection;
+  makingOffer: boolean;
+  ignoreOffer: boolean;
+  polite: boolean;
+  iceFailTimer: ReturnType<typeof setTimeout> | null;
 }
 
 class VoiceManager {
   private localStream: MediaStream | null = null;
-  private peerConnections = new Map<string, RTCPeerConnection>();
+  private peers = new Map<string, PeerEntry>();
   private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
   private remoteAudios = new Map<string, HTMLAudioElement>();
   private audioContainer: HTMLDivElement | null = null;
 
-  // Optional local self-test loopback so user can verify their own mic
+  // Optional local self-test loopback
   private selfTestAudio: HTMLAudioElement | null = null;
-  private selfTesting = false;
 
   private voiceToken: string | null = null;
-  private iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+  private iceServers: RTCIceServer[] = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+  ];
   private myUserId: string | null = null;
   private activeRoomCode: string | null = null;
   private speakerEnabled = true;
@@ -40,6 +50,7 @@ class VoiceManager {
   private lastSpeaking = false;
   private speakingHoldUntil = 0;
   private boundSocket: Socket | null = null;
+  private gestureUnlockBound = false;
 
   private cb: VoiceCallbacks = {
     onStatus: () => {},
@@ -48,10 +59,23 @@ class VoiceManager {
     onMicState: () => {},
     onConnectedPeers: () => {},
     onAutoplayBlocked: () => {},
+    onIceFailure: () => {},
   };
 
   public setCallbacks(cb: VoiceCallbacks): void {
     this.cb = cb;
+  }
+
+  private bindGlobalGestureUnlock(): void {
+    if (this.gestureUnlockBound || typeof window === 'undefined') return;
+    this.gestureUnlockBound = true;
+    const unlock = () => {
+      if (this.remoteAudios.size > 0 && this.speakerEnabled) {
+        this.unlockRemoteAudioPlayback();
+      }
+    };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock, { passive: true });
   }
 
   private ensureAudioContainer(): HTMLDivElement {
@@ -67,12 +91,22 @@ class VoiceManager {
 
   private updateConnectedPeersCount(): void {
     let connected = 0;
-    for (const pc of this.peerConnections.values()) {
-      if (pc.connectionState === 'connected' || pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+    let anyFailed = false;
+    for (const entry of this.peers.values()) {
+      const state = entry.pc.connectionState;
+      const ice = entry.pc.iceConnectionState;
+      if (state === 'connected' || ice === 'connected' || ice === 'completed') {
         connected++;
+        if (entry.iceFailTimer) {
+          clearTimeout(entry.iceFailTimer);
+          entry.iceFailTimer = null;
+        }
+      } else if (state === 'failed' || ice === 'failed') {
+        anyFailed = true;
       }
     }
     this.cb.onConnectedPeers(connected);
+    this.cb.onIceFailure(anyFailed && connected === 0);
   }
 
   public bindSocketListeners(): void {
@@ -81,13 +115,16 @@ class VoiceManager {
 
     this.unbindSocketListeners();
     this.boundSocket = socket;
+    this.bindGlobalGestureUnlock();
 
     socket.on('voice:peer_joined', async (payload: { roomCode: string; peer: VoicePeerState }) => {
       if (!this.voiceToken || payload.roomCode !== this.activeRoomCode) return;
       if (payload.peer.userId === this.myUserId) return;
-      // Deterministically let the lexicographically smaller userId initiate offer to prevent glare
-      if (this.myUserId && this.myUserId < payload.peer.userId) {
-        await this.createAndSendOffer(payload.peer.userId);
+      // Only create peer entry; negotiationneeded triggers automatically with Perfect Negotiation!
+      const entry = this.getOrCreatePeer(payload.peer.userId);
+      // If we are impolite (initiator) and no offer is in flight, kick off negotiation
+      if (!entry.polite && entry.pc.signalingState === 'stable') {
+        await this.negotiatePeer(payload.peer.userId, entry);
       }
     });
 
@@ -137,16 +174,15 @@ class VoiceManager {
   }
 
   /**
-   * Joins the room's isolated WebRTC voice mesh in LISTEN-ONLY mode (NEVER asks for mic permission!)
-   * so players who don't enable their microphone can still hear teammates who do.
+   * Joins the room's isolated WebRTC voice mesh in LISTEN-ONLY mode (NEVER requests mic permission!)
    */
   public async ensureListening(userId: string, roomCode: string): Promise<void> {
     if (!this.speakerEnabled) return;
-    if (this.micEnabled || this.listeningJoined) {
-      if (this.activeRoomCode === roomCode) return;
-    }
+    if ((this.micEnabled || this.listeningJoined) && this.activeRoomCode === roomCode) return;
+
     this.myUserId = userId;
     this.activeRoomCode = roomCode;
+    this.bindGlobalGestureUnlock();
 
     try {
       const tokenRes = await emitAck<{
@@ -177,20 +213,23 @@ class VoiceManager {
 
       for (const peer of joinRes.peers ?? []) {
         if (peer.userId === this.myUserId) continue;
-        if (this.myUserId && this.myUserId < peer.userId) {
-          await this.createAndSendOffer(peer.userId);
+        const entry = this.getOrCreatePeer(peer.userId);
+        if (!entry.polite) {
+          await this.negotiatePeer(peer.userId, entry);
         }
       }
     } catch {
-      // Non-fatal; listen-only fails silently without disturbing gameplay
+      // Non-fatal
     }
   }
 
   public async enableMicrophone(userId: string, roomCode: string): Promise<boolean> {
     this.cb.onError(null);
+    this.cb.onIceFailure(false);
     this.cb.onStatus('connecting');
     this.myUserId = userId;
     this.activeRoomCode = roomCode;
+    this.bindGlobalGestureUnlock();
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       this.cb.onStatus('error');
@@ -227,8 +266,24 @@ class VoiceManager {
       this.iceServers = tokenRes.payload.iceServers;
       this.bindSocketListeners();
 
-      // Close any old receive-only peers so fresh bidirectional audio tracks negotiate cleanly
-      this.closeAllPeers();
+      // Attach local audio track to existing peers cleanly OR recreate if recvonly
+      const audioTrack = stream.getAudioTracks()[0];
+      for (const [peerId, entry] of this.peers.entries()) {
+        const sender = entry.pc.getSenders().find((s) => s.track?.kind === 'audio' || !s.track);
+        if (sender && entry.pc.getTransceivers().some((t) => t.direction === 'sendrecv')) {
+          await sender.replaceTrack(audioTrack);
+        } else {
+          // Upgrade recvonly transceiver to sendrecv and renegotiate cleanly
+          const trans = entry.pc.getTransceivers().find((t) => t.receiver.track?.kind === 'audio');
+          if (trans) {
+            trans.direction = 'sendrecv';
+            await trans.sender.replaceTrack(audioTrack);
+          } else {
+            entry.pc.addTrack(audioTrack, stream);
+          }
+          await this.negotiatePeer(peerId, entry);
+        }
+      }
 
       const joinRes = await emitAck<{
         ok: boolean;
@@ -248,14 +303,15 @@ class VoiceManager {
       this.startSpeakingMonitor(stream);
       this.cb.onStatus('connected');
 
-      // Actively offer to ALL existing peers in the room when enabling mic so tracks always attach!
-      const existingPeers = joinRes.peers ?? [];
-      for (const peer of existingPeers) {
+      // Connect to any peers not yet in our map
+      for (const peer of joinRes.peers ?? []) {
         if (peer.userId === this.myUserId) continue;
-        await this.createAndSendOffer(peer.userId);
+        if (!this.peers.has(peer.userId)) {
+          const entry = this.getOrCreatePeer(peer.userId);
+          await this.negotiatePeer(peer.userId, entry);
+        }
       }
 
-      // Also retry playback on any existing remote audio elements since this click is a user gesture
       this.unlockRemoteAudioPlayback();
       return true;
     } catch (err) {
@@ -274,7 +330,6 @@ class VoiceManager {
       this.stopSelfTest();
       return false;
     }
-    this.selfTesting = enabled;
     if (enabled) {
       if (!this.selfTestAudio) {
         this.selfTestAudio = document.createElement('audio');
@@ -287,14 +342,12 @@ class VoiceManager {
       this.selfTestAudio.volume = 0.85;
       this.selfTestAudio.play().catch(() => {});
       return true;
-    } else {
-      this.stopSelfTest();
-      return false;
     }
+    this.stopSelfTest();
+    return false;
   }
 
   private stopSelfTest(): void {
-    this.selfTesting = false;
     if (this.selfTestAudio) {
       this.selfTestAudio.pause();
       this.selfTestAudio.srcObject = null;
@@ -341,8 +394,10 @@ class VoiceManager {
     if (!joinRes.ok) throw new Error('Rejoin failed.');
     this.cb.onStatus(this.micEnabled ? 'connected' : 'listening');
     for (const peer of joinRes.peers ?? []) {
-      if (this.myUserId && this.myUserId < peer.userId) {
-        await this.createAndSendOffer(peer.userId);
+      if (peer.userId === this.myUserId) continue;
+      const entry = this.getOrCreatePeer(peer.userId);
+      if (!entry.polite) {
+        await this.negotiatePeer(peer.userId, entry);
       }
     }
   }
@@ -392,6 +447,7 @@ class VoiceManager {
     this.cb.onMicState(false, false);
     this.cb.onConnectedPeers(0);
     this.cb.onAutoplayBlocked(false);
+    this.cb.onIceFailure(false);
     this.cb.onStatus('idle');
     this.cb.onError(null);
 
@@ -485,19 +541,31 @@ class VoiceManager {
     }
   }
 
-  private getOrCreatePeer(targetUserId: string): RTCPeerConnection {
-    const existing = this.peerConnections.get(targetUserId);
+  private getOrCreatePeer(targetUserId: string): PeerEntry {
+    const existing = this.peers.get(targetUserId);
     if (existing) return existing;
 
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    this.peerConnections.set(targetUserId, pc);
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      iceCandidatePoolSize: 4,
+    });
+
+    // Polite peer yields on offer collision (W3C Perfect Negotiation)
+    const polite = Boolean(this.myUserId && this.myUserId > targetUserId);
+    const entry: PeerEntry = {
+      pc,
+      makingOffer: false,
+      ignoreOffer: false,
+      polite,
+      iceFailTimer: null,
+    };
+    this.peers.set(targetUserId, entry);
 
     if (this.localStream) {
       for (const track of this.localStream.getAudioTracks()) {
         pc.addTrack(track, this.localStream);
       }
     } else {
-      // Receive-only transceiver so listen-only peers still receive remote voice audio!
       pc.addTransceiver('audio', { direction: 'recvonly' });
     }
 
@@ -533,18 +601,50 @@ class VoiceManager {
       }
     };
 
+    // Flag ICE failure if peer stays stuck in checking/disconnected for >10s (typically needs TURN on 4G/5G)
+    entry.iceFailTimer = setTimeout(() => {
+      const ice = pc.iceConnectionState;
+      if (ice !== 'connected' && ice !== 'completed' && pc.connectionState !== 'connected') {
+        this.cb.onIceFailure(true);
+      }
+    }, 10000);
+
     pc.onconnectionstatechange = () => {
       this.updateConnectedPeersCount();
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'closed') {
         this.closePeer(targetUserId);
       }
     };
 
     pc.oniceconnectionstatechange = () => {
       this.updateConnectedPeersCount();
+      if (pc.iceConnectionState === 'failed' && !entry.polite) {
+        pc.restartIce();
+        this.negotiatePeer(targetUserId, entry).catch(() => {});
+      }
     };
 
-    return pc;
+    return entry;
+  }
+
+  private async negotiatePeer(targetUserId: string, entry: PeerEntry): Promise<void> {
+    if (!this.voiceToken || entry.makingOffer) return;
+    try {
+      entry.makingOffer = true;
+      const offer = await entry.pc.createOffer();
+      if (entry.pc.signalingState !== 'stable') return;
+      await entry.pc.setLocalDescription(offer);
+      getSocket()?.emit('voice:signal', {
+        token: this.voiceToken,
+        targetUserId,
+        signalType: 'offer',
+        data: entry.pc.localDescription,
+      });
+    } catch {
+      // ignore transient collision
+    } finally {
+      entry.makingOffer = false;
+    }
   }
 
   private async flushPendingCandidates(targetUserId: string, pc: RTCPeerConnection): Promise<void> {
@@ -560,64 +660,48 @@ class VoiceManager {
     }
   }
 
-  private async createAndSendOffer(targetUserId: string): Promise<void> {
-    if (!this.voiceToken) return;
-    try {
-      const pc = this.getOrCreatePeer(targetUserId);
-      const offer = await pc.createOffer({ offerToReceiveAudio: true });
-      await pc.setLocalDescription(offer);
-      getSocket()?.emit('voice:signal', {
-        token: this.voiceToken,
-        targetUserId,
-        signalType: 'offer',
-        data: offer,
-      });
-    } catch {
-      // ignore transient negotiation errors
-    }
-  }
-
   private async handleIncomingSignal(
     fromUserId: string,
     signalType: 'offer' | 'answer' | 'ice-candidate',
     data: unknown
   ): Promise<void> {
     if (!this.voiceToken) return;
+    const entry = this.getOrCreatePeer(fromUserId);
+    const { pc } = entry;
+
     try {
-      if (signalType === 'offer') {
-        // If an offer arrives from a peer who just enabled mic, recreate peer cleanly if needed
-        const existing = this.peerConnections.get(fromUserId);
-        if (existing && existing.signalingState !== 'stable') {
-          this.closePeer(fromUserId);
+      if (signalType === 'offer' || signalType === 'answer') {
+        const description = data as RTCSessionDescriptionInit;
+        const offerCollision =
+          signalType === 'offer' && (entry.makingOffer || pc.signalingState !== 'stable');
+
+        entry.ignoreOffer = !entry.polite && offerCollision;
+        if (entry.ignoreOffer) return;
+
+        if (offerCollision && entry.polite) {
+          // Polite peer cleanly rolls back its own local offer and accepts remote offer!
+          await pc.setLocalDescription({ type: 'rollback' });
         }
-        const pc = this.getOrCreatePeer(fromUserId);
-        await pc.setRemoteDescription(
-          new RTCSessionDescription(data as RTCSessionDescriptionInit)
-        );
+
+        await pc.setRemoteDescription(new RTCSessionDescription(description));
         await this.flushPendingCandidates(fromUserId, pc);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        getSocket()?.emit('voice:signal', {
-          token: this.voiceToken,
-          targetUserId: fromUserId,
-          signalType: 'answer',
-          data: answer,
-        });
-      } else if (signalType === 'answer') {
-        const pc = this.peerConnections.get(fromUserId);
-        if (pc && pc.signalingState === 'have-local-offer') {
-          await pc.setRemoteDescription(
-            new RTCSessionDescription(data as RTCSessionDescriptionInit)
-          );
-          await this.flushPendingCandidates(fromUserId, pc);
+
+        if (signalType === 'offer') {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          getSocket()?.emit('voice:signal', {
+            token: this.voiceToken,
+            targetUserId: fromUserId,
+            signalType: 'answer',
+            data: pc.localDescription,
+          });
         }
       } else if (signalType === 'ice-candidate' && data) {
-        const pc = this.getOrCreatePeer(fromUserId);
+        if (entry.ignoreOffer) return;
         const candidateInit = data as RTCIceCandidateInit;
         if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
         } else {
-          // Buffer ICE candidates until remoteDescription is applied!
           const list = this.pendingCandidates.get(fromUserId) ?? [];
           list.push(candidateInit);
           this.pendingCandidates.set(fromUserId, list);
@@ -630,10 +714,11 @@ class VoiceManager {
 
   private closePeer(userId: string): void {
     this.pendingCandidates.delete(userId);
-    const pc = this.peerConnections.get(userId);
-    if (pc) {
-      pc.close();
-      this.peerConnections.delete(userId);
+    const entry = this.peers.get(userId);
+    if (entry) {
+      if (entry.iceFailTimer) clearTimeout(entry.iceFailTimer);
+      entry.pc.close();
+      this.peers.delete(userId);
     }
     const audio = this.remoteAudios.get(userId);
     if (audio) {
@@ -646,7 +731,7 @@ class VoiceManager {
   }
 
   private closeAllPeers(): void {
-    for (const uid of Array.from(this.peerConnections.keys())) {
+    for (const uid of Array.from(this.peers.keys())) {
       this.closePeer(uid);
     }
   }

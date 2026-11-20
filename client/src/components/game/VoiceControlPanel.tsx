@@ -31,6 +31,7 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
     micLevel,
     connectedAudioPeers,
     autoplayBlocked,
+    iceFailed,
     selfTesting,
     error,
     peers,
@@ -78,6 +79,24 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
 
   return (
     <div className="fixed bottom-4 right-4 z-30 flex flex-col items-end gap-2">
+      {/* ICE / NAT Firewall Notice (helps diagnose mobile 4G/5G needing TURN) */}
+      <AnimatePresence>
+        {iceFailed && (micEnabled || status === 'listening') && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            className="glass-panel w-72 rounded-2xl border border-amber-400/55 p-3 text-[11px] leading-relaxed text-[#F6D889] shadow-2xl"
+          >
+            <p className="font-bold text-amber-300">Network firewall blocked direct voice</p>
+            <p className="mt-1 text-[#D8CAB3]">
+              Friends on mobile 4G/5G or strict Wi-Fi need a free TURN relay (add{' '}
+              <code className="text-[#1CD696]">TURN_URL</code> in Render Environment).
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Browser Autoplay Blocked Unmute Prompt */}
       <AnimatePresence>
         {autoplayBlocked && speakerEnabled && (

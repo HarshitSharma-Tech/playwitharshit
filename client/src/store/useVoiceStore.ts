@@ -19,6 +19,7 @@ interface VoiceStoreState {
   micLevel: number;
   connectedAudioPeers: number;
   autoplayBlocked: boolean;
+  iceFailed: boolean;
   selfTesting: boolean;
   error: string | null;
   peers: VoicePeerState[];
@@ -42,6 +43,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     onMicState: (micEnabled, muted) => set({ micEnabled, muted }),
     onConnectedPeers: (connectedAudioPeers) => set({ connectedAudioPeers }),
     onAutoplayBlocked: (autoplayBlocked) => set({ autoplayBlocked }),
+    onIceFailure: (iceFailed) => set({ iceFailed }),
   });
 
   return {
@@ -53,6 +55,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     micLevel: 0,
     connectedAudioPeers: 0,
     autoplayBlocked: false,
+    iceFailed: false,
     selfTesting: false,
     error: null,
     peers: [],
@@ -117,6 +120,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
         micLevel: 0,
         connectedAudioPeers: 0,
         autoplayBlocked: false,
+        iceFailed: false,
         selfTesting: false,
         error: null,
         peers: [],

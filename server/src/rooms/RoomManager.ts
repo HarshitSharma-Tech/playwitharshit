@@ -46,11 +46,20 @@ const VOICE_TOKEN_SECRET =
 
 function getIceServers(): VoiceTokenPayload['iceServers'] {
   const servers: VoiceTokenPayload['iceServers'] = [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    {
+      urls: [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun.cloudflare.com:3478',
+      ],
+    },
   ];
   if (process.env.TURN_URL) {
+    const urls = process.env.TURN_URL.split(',')
+      .map((u) => u.trim())
+      .filter(Boolean);
     servers.push({
-      urls: process.env.TURN_URL,
+      urls: urls.length === 1 ? urls[0] : urls,
       username: process.env.TURN_USERNAME,
       credential: process.env.TURN_CREDENTIAL,
     });
