@@ -110,6 +110,46 @@ interface GameStoreState {
   }) => Promise<void>;
 }
 
+const VIEW_STORAGE_KEY = 'bluffed_active_view';
+
+function syncRoomUrl(roomCode: string | null): void {
+  try {
+    const url = new URL(window.location.href);
+    if (roomCode) {
+      url.searchParams.set('room', roomCode);
+    } else {
+      url.searchParams.delete('room');
+    }
+    window.history.replaceState({}, '', url.pathname + url.search);
+  } catch {
+    // ignore
+  }
+}
+
+function saveNonGameView(view: AppView): void {
+  try {
+    if (view === 'lobby' || view === 'game') {
+      sessionStorage.removeItem(VIEW_STORAGE_KEY);
+    } else {
+      sessionStorage.setItem(VIEW_STORAGE_KEY, view);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function loadSavedView(): AppView {
+  try {
+    const v = sessionStorage.getItem(VIEW_STORAGE_KEY);
+    if (v === 'how-to-play' || v === 'leaderboard' || v === 'profile' || v === 'home') {
+      return v;
+    }
+  } catch {
+    // ignore
+  }
+  return 'home';
+}
+
 function attachSocketListeners(
   token: string,
   set: (partial: Partial<GameStoreState> | ((s: GameStoreState) => Partial<GameStoreState>)) => void,
@@ -123,12 +163,41 @@ function attachSocketListeners(
     socket.emit(
       'room:sync',
       {},
-      (res: { ok: boolean; active?: { lobby: LobbyState; hasGame: boolean } | null }) => {
+      (res: {
+        ok: boolean;
+        active?: {
+          lobby: LobbyState;
+          hasGame: boolean;
+          gameState?: SanitizedGameState | null;
+          chatHistory?: ChatMessage[];
+        } | null;
+      }) => {
         if (res?.ok && res.active) {
+          const { lobby, hasGame, gameState, chatHistory } = res.active;
+          const myId = get().user?.id;
+          if (myId && lobby?.code) {
+            useVoiceStore.getState().prepareRoom(myId, lobby.code);
+            syncRoomUrl(lobby.code);
+          }
           set({
-            lobby: res.active.lobby,
-            activeView: res.active.hasGame ? 'game' : 'lobby',
+            lobby,
+            gameState: gameState ?? get().gameState,
+            chatMessages: chatHistory ?? get().chatMessages,
+            activeView: hasGame ? 'game' : 'lobby',
+            showJoinRoomModal: false,
           });
+        } else {
+          // If the URL still has ?room=CODE (e.g. shared link or expired table), prefill Join Room
+          const params = new URLSearchParams(window.location.search);
+          const roomParam = params.get('room') || params.get('join');
+          if (roomParam && /^[A-Za-z0-9]{4,8}$/.test(roomParam.trim())) {
+            const code = roomParam.trim().toUpperCase();
+            syncRoomUrl(null);
+            set({
+              showJoinRoomModal: true,
+              joinModalPrefillCode: code,
+            });
+          }
         }
       }
     );
@@ -151,6 +220,7 @@ function attachSocketListeners(
     const myId = get().user?.id;
     if (myId && lobby?.code) {
       useVoiceStore.getState().prepareRoom(myId, lobby.code);
+      syncRoomUrl(lobby.code);
     }
     if (prev && lobby.players.length > prev.players.length) {
       soundEngine.play('playerJoin');
@@ -336,7 +406,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       setStoredToken(token);
     }
 
-    set({ token, user, matchHistory: history, initialized: true });
+    set({ token, user, matchHistory: history, activeView: loadSavedView(), initialized: true });
     attachSocketListeners(token, set, get);
 
     const params = new URLSearchParams(window.location.search);
@@ -354,6 +424,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
   setView: (view) => {
     soundEngine.play('click');
+    saveNonGameView(view);
     set({ activeView: view });
   },
 
@@ -501,6 +572,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
   leaveRoom: async () => {
     useVoiceStore.getState().resetOnLeaveRoom();
+    syncRoomUrl(null);
+    saveNonGameView('home');
     try {
       await emitAck('room:leave');
     } catch {

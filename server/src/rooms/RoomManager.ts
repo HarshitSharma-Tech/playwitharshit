@@ -19,6 +19,7 @@ import {
   type ReactionEmoji,
   type ReactionEvent,
   type RoomSettings,
+  type SanitizedGameState,
   type ShuffleSpeed,
   type SpectatorInfo,
   type TurnTimerOption,
@@ -270,7 +271,12 @@ export class RoomManager {
     return list.sort((a, b) => b.playerCount - a.playerCount);
   }
 
-  public getUserActiveRoom(userId: string): { lobby: LobbyState; hasGame: boolean } | null {
+  public getUserActiveRoom(userId: string): {
+    lobby: LobbyState;
+    hasGame: boolean;
+    gameState: SanitizedGameState | null;
+    chatHistory: ChatMessage[];
+  } | null {
     const code = this.userToRoom.get(userId);
     if (!code) return null;
     const room = this.rooms.get(code);
@@ -278,9 +284,13 @@ export class RoomManager {
       this.userToRoom.delete(userId);
       return null;
     }
+    this.joinUserSocketsToChannel(userId, code);
+    const hasGame = room.engine !== null && room.status !== 'lobby';
     return {
       lobby: this.toLobbyState(room),
-      hasGame: room.engine !== null && room.status !== 'lobby',
+      hasGame,
+      gameState: hasGame && room.engine ? room.engine.getSanitizedStateForRecipient(userId) : null,
+      chatHistory: room.chatHistory,
     };
   }
 
