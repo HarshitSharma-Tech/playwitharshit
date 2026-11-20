@@ -14,6 +14,7 @@ interface VoiceStoreState {
   status: VoiceConnectionStatus;
   micEnabled: boolean;
   muted: boolean;
+  pushToTalk: boolean;
   speakerEnabled: boolean;
   speaking: boolean;
   micLevel: number;
@@ -30,6 +31,8 @@ interface VoiceStoreState {
   enableMic: (userId: string, roomCode: string) => Promise<void>;
   disableMic: () => Promise<void>;
   toggleMute: () => void;
+  setMuted: (muted: boolean) => void;
+  togglePushToTalk: () => void;
   toggleSpeaker: () => void;
   toggleSelfTest: () => void;
   unlockAudio: () => void;
@@ -53,6 +56,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     status: 'idle',
     micEnabled: false,
     muted: false,
+    pushToTalk: false,
     speakerEnabled: true,
     speaking: false,
     micLevel: 0,
@@ -95,6 +99,20 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
       const { micEnabled, muted } = get();
       if (!micEnabled) return;
       voiceManager.setMuted(!muted);
+    },
+
+    setMuted: (nextMuted) => {
+      if (!get().micEnabled) return;
+      voiceManager.setMuted(nextMuted);
+    },
+
+    togglePushToTalk: () => {
+      const nextPtt = !get().pushToTalk;
+      set({ pushToTalk: nextPtt });
+      if (get().micEnabled) {
+        // In Push-to-Talk mode, stay muted until player holds talk button or V key!
+        voiceManager.setMuted(nextPtt);
+      }
     },
 
     toggleSpeaker: () => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -26,6 +26,7 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
     status,
     micEnabled,
     muted,
+    pushToTalk,
     speakerEnabled,
     speaking,
     micLevel,
@@ -39,6 +40,8 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
     enableMic,
     disableMic,
     toggleMute,
+    setMuted,
+    togglePushToTalk,
     toggleSpeaker,
     toggleSelfTest,
     unlockAudio,
@@ -47,6 +50,31 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
 
   const { sendVoicePhrase } = useGameStore();
   const [showPhrases, setShowPhrases] = useState(false);
+
+  // Hold 'V' key for Push-to-Talk (zero echo on speakers!)
+  useEffect(() => {
+    if (!micEnabled || !pushToTalk) return;
+    const isTyping = (target: EventTarget | null) =>
+      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+
+    const onDown = (e: KeyboardEvent) => {
+      if (e.repeat || isTyping(e.target)) return;
+      if (e.key.toLowerCase() === 'v') {
+        setMuted(false);
+      }
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'v') {
+        setMuted(true);
+      }
+    };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+    };
+  }, [micEnabled, pushToTalk, setMuted]);
 
   const activeSpeakersCount = peers.filter((p) => p.micEnabled).length;
   const speakingPeers = peers.filter((p) => p.speaking && p.userId !== userId);
@@ -249,18 +277,54 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
           </button>
         ) : (
           <>
+            {pushToTalk ? (
+              <button
+                type="button"
+                onPointerDown={() => setMuted(false)}
+                onPointerUp={() => setMuted(true)}
+                onPointerLeave={() => setMuted(true)}
+                onPointerCancel={() => setMuted(true)}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-bold select-none transition cursor-pointer ${
+                  !muted
+                    ? 'bg-emerald-400 text-[#0B0907] shadow-[0_0_20px_rgba(16,185,129,0.5)]'
+                    : 'bg-[#241B13] border border-[#E6B84C]/55 text-[#F6D889]'
+                }`}
+                title="Hold button or press V key to talk (zero echo!)"
+              >
+                <Mic className="h-3.5 w-3.5" />
+                <span>{!muted ? 'Talking...' : 'Hold (V)'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={toggleMute}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-bold transition cursor-pointer ${
+                  muted
+                    ? 'bg-[#E1384B]/20 border border-[#E1384B]/55 text-[#FF9BA6]'
+                    : 'bg-emerald-500/20 border border-emerald-400/55 text-emerald-300'
+                }`}
+                title={muted ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                <span>{muted ? 'Unmute' : 'Mute'}</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={toggleMute}
-              className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-bold transition cursor-pointer ${
-                muted
-                  ? 'bg-[#E1384B]/20 border border-[#E1384B]/55 text-[#FF9BA6]'
-                  : 'bg-emerald-500/20 border border-emerald-400/55 text-emerald-300'
+              onClick={togglePushToTalk}
+              className={`rounded-xl border px-2 py-1.5 font-[var(--font-mono)] text-[9px] font-bold uppercase transition cursor-pointer ${
+                pushToTalk
+                  ? 'bg-[#E6B84C] border-[#E6B84C] text-[#0B0907]'
+                  : 'bg-[#18130F] border-white/10 text-[#B9A992] hover:border-[#E6B84C]/60'
               }`}
-              title={muted ? 'Unmute microphone' : 'Mute microphone'}
+              title={
+                pushToTalk
+                  ? 'Push-to-Talk ON (click for Open Mic)'
+                  : 'Switch to Push-to-Talk (eliminates speaker echo!)'
+              }
             >
-              {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-              <span>{muted ? 'Unmute' : 'Mute'}</span>
+              PTT
             </button>
 
             <button

@@ -21,10 +21,14 @@ interface PeerEntry {
   makingOffer: boolean;
   ignoreOffer: boolean;
   polite: boolean;
+  createdAt: number;
   hasLiveRemoteAudio: boolean;
 }
 
 const TARGET_SAMPLE_RATE = 16000;
+// Wait 6 seconds for WebRTC + TURN to connect before ever engaging Socket.IO relay fallback
+// This prevents double-playback echo and lets browser hardware Acoustic Echo Cancellation (AEC) work!
+const RELAY_FALLBACK_DELAY_MS = 6000;
 
 function downsampleToInt16(input: Float32Array, inputRate: number): Int16Array {
   if (inputRate <= TARGET_SAMPLE_RATE) {
@@ -63,7 +67,6 @@ class VoiceManager {
   private audioContainer: HTMLDivElement | null = null;
   private selfTestAudio: HTMLAudioElement | null = null;
 
-  // Strongly held AudioContext nodes so Chrome never garbage-collects ScriptProcessor
   private captureCtx: AudioContext | null = null;
   private captureSource: MediaStreamAudioSourceNode | null = null;
   private captureProcessor: ScriptProcessorNode | null = null;
@@ -148,34 +151,49 @@ class VoiceManager {
       if (!AudioCtx) return null;
       this.playbackCtx = new AudioCtx();
       this.playbackGain = this.playbackCtx.createGain();
-      this.playbackGain.gain.value = this.speakerEnabled ? 1.15 : 0.0;
+      this.playbackGain.gain.value = this.speakerEnabled ? 0.9 : 0.0;
       this.playbackGain.connect(this.playbackCtx.destination);
     }
     return this.playbackCtx;
   }
 
-  /**
-   * Only consider WebRTC P2P fully carrying audio if the peer connection is connected
-   * AND we have actually received a live remote audio track (or sent ours cleanly).
-   */
-  private isPeerPlayingOverWebRTC(userId: string): boolean {
-    const entry = this.peers.get(userId);
-    if (!entry) return false;
-    const connected =
+  private isWebRtcConnected(entry: PeerEntry): boolean {
+    return (
       entry.pc.connectionState === 'connected' ||
       entry.pc.iceConnectionState === 'connected' ||
-      entry.pc.iceConnectionState === 'completed';
-    return connected && entry.hasLiveRemoteAudio;
+      entry.pc.iceConnectionState === 'completed'
+    );
   }
 
-  private getConfirmedP2PPeerIds(): string[] {
-    const ids: string[] = [];
-    for (const [uid] of this.peers.entries()) {
-      if (this.isPeerPlayingOverWebRTC(uid)) {
-        ids.push(uid);
+  /**
+   * Returns peer IDs that should NOT receive Socket.IO relay chunks:
+   * - Any peer already connected via WebRTC/TURN (uses crisp hardware AEC!)
+   * - Any peer still within the initial 6s WebRTC handshake grace window (prevents double-audio echo!)
+   */
+  private getPeersExcludedFromRelay(): string[] {
+    const now = Date.now();
+    const excluded: string[] = [];
+    for (const [uid, entry] of this.peers.entries()) {
+      const failed =
+        entry.pc.connectionState === 'failed' || entry.pc.iceConnectionState === 'failed';
+      const withinGrace = now - entry.createdAt < RELAY_FALLBACK_DELAY_MS;
+      if (this.isWebRtcConnected(entry) || (!failed && withinGrace)) {
+        excluded.push(uid);
       }
     }
-    return ids;
+    return excluded;
+  }
+
+  private shouldSendAnyRelay(): boolean {
+    if (this.peers.size === 0) return false;
+    const now = Date.now();
+    for (const entry of this.peers.values()) {
+      const failed =
+        entry.pc.connectionState === 'failed' || entry.pc.iceConnectionState === 'failed';
+      const timedOut = !this.isWebRtcConnected(entry) && now - entry.createdAt >= RELAY_FALLBACK_DELAY_MS;
+      if (failed || timedOut) return true;
+    }
+    return false;
   }
 
   private pulseReceivingAudio(): void {
@@ -187,7 +205,12 @@ class VoiceManager {
   }
 
   private refreshTransportState(): void {
-    const p2pIds = this.getConfirmedP2PPeerIds();
+    const p2pConnected: string[] = [];
+    for (const [uid, entry] of this.peers.entries()) {
+      if (this.isWebRtcConnected(entry)) {
+        p2pConnected.push(uid);
+      }
+    }
     const now = Date.now();
     for (const [uid, ts] of this.relayLastHeardByPeer.entries()) {
       if (now - ts > 8000) {
@@ -195,22 +218,18 @@ class VoiceManager {
         this.relayActivePeers.delete(uid);
       }
     }
-    const combined = new Set<string>([...p2pIds, ...this.relayActivePeers]);
+    const combined = new Set<string>([...p2pConnected, ...this.relayActivePeers]);
     this.cb.onConnectedPeers(combined.size);
 
-    if (p2pIds.length > 0) {
+    if (p2pConnected.length > 0) {
       this.cb.onTransportMode('p2p');
-    } else if (this.relayActivePeers.size > 0 || this.micEnabled) {
+    } else if (this.relayActivePeers.size > 0) {
       this.cb.onTransportMode('relay');
     } else {
       this.cb.onTransportMode('none');
     }
   }
 
-  /**
-   * Call immediately when entering ANY room so this client is ready to receive
-   * relayed voice audio immediately without ever requesting microphone permission.
-   */
   public prepareRoomListener(userId: string, roomCode: string): void {
     this.myUserId = userId;
     this.activeRoomCode = roomCode;
@@ -229,7 +248,6 @@ class VoiceManager {
     socket.on('voice:peer_joined', async (payload: { roomCode: string; peer: VoicePeerState }) => {
       if (!this.voiceToken || payload.roomCode !== this.activeRoomCode) return;
       if (payload.peer.userId === this.myUserId) return;
-      // Only initiate WebRTC offer if we have our mic ON or we are the designated offerer
       const entry = this.getOrCreatePeer(payload.peer.userId);
       if (!entry.polite && entry.pc.signalingState === 'stable') {
         await this.negotiatePeer(payload.peer.userId, entry);
@@ -249,7 +267,7 @@ class VoiceManager {
       }
     );
 
-    // Server-relayed audio fallback: guaranteed audio delivery across all 4G/5G/NATs!
+    // Emergency Socket.IO relay receiver: strictly skipped if WebRTC audio is already active for sender!
     socket.on(
       'voice:relay_audio',
       (payload: {
@@ -262,8 +280,9 @@ class VoiceManager {
         if (payload.fromUserId === this.myUserId) return;
         if (this.activeRoomCode && payload.roomCode !== this.activeRoomCode) return;
 
-        // Only skip relay if we have ALREADY confirmed a live playing WebRTC audio track from this exact sender!
-        if (this.isPeerPlayingOverWebRTC(payload.fromUserId)) {
+        // Strictly prevent double-audio echo if WebRTC is connected or already attached an audio element
+        const entry = this.peers.get(payload.fromUserId);
+        if (entry && (this.isWebRtcConnected(entry) || entry.hasLiveRemoteAudio)) {
           return;
         }
 
@@ -319,13 +338,8 @@ class VoiceManager {
     if (ctx.state === 'suspended') {
       ctx
         .resume()
-        .then(() => {
-          this.cb.onAutoplayBlocked(false);
-        })
-        .catch(() => {
-          this.cb.onAutoplayBlocked(true);
-        });
-      // If still suspended right this millisecond, prompt user to tap once
+        .then(() => this.cb.onAutoplayBlocked(false))
+        .catch(() => this.cb.onAutoplayBlocked(true));
       if (ctx.state === 'suspended') {
         this.cb.onAutoplayBlocked(true);
         return;
@@ -357,7 +371,7 @@ class VoiceManager {
     let startAt = this.nextPlayTimeByPeer.get(fromUserId) ?? now + 0.04;
     if (startAt < now + 0.008) {
       startAt = now + 0.03;
-    } else if (startAt > now + 0.35) {
+    } else if (startAt > now + 0.3) {
       startAt = now + 0.05;
     }
 
@@ -373,9 +387,6 @@ class VoiceManager {
     }
   }
 
-  /**
-   * Joins the room's isolated voice channel in LISTEN-ONLY mode (NEVER asks for mic permission!)
-   */
   public async ensureListening(userId: string, roomCode: string): Promise<void> {
     if (!this.speakerEnabled) return;
     this.myUserId = userId;
@@ -411,7 +422,6 @@ class VoiceManager {
         this.cb.onStatus('listening');
       }
 
-      // Let peers who actually have mics ON initiate the offer, or initiate cleanly if impolite
       for (const peer of joinRes.peers ?? []) {
         if (peer.userId === this.myUserId) continue;
         const entry = this.getOrCreatePeer(peer.userId);
@@ -424,14 +434,17 @@ class VoiceManager {
     }
   }
 
-  public async enableMicrophone(userId: string, roomCode: string): Promise<boolean> {
+  public async enableMicrophone(
+    userId: string,
+    roomCode: string,
+    startMuted = false
+  ): Promise<boolean> {
     this.cb.onError(null);
     this.cb.onStatus('connecting');
     this.myUserId = userId;
     this.activeRoomCode = roomCode;
     this.bindGlobalGestureUnlock();
 
-    // User gesture! Resume playback AudioContext right away so we can hear others immediately too!
     const playCtx = this.ensurePlaybackContext();
     if (playCtx && playCtx.state === 'suspended') {
       playCtx.resume().catch(() => {});
@@ -449,14 +462,19 @@ class VoiceManager {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          channelCount: 1,
         },
         video: false,
       });
 
+      for (const track of stream.getAudioTracks()) {
+        track.enabled = !startMuted;
+      }
+
       this.localStream = stream;
       this.micEnabled = true;
-      this.muted = false;
-      this.cb.onMicState(true, false);
+      this.muted = startMuted;
+      this.cb.onMicState(true, startMuted);
 
       const tokenRes = await emitAck<{
         ok: boolean;
@@ -472,7 +490,6 @@ class VoiceManager {
       this.iceServers = tokenRes.payload.iceServers;
       this.bindSocketListeners();
 
-      // Cleanly rebuild peers so our outgoing audio track is ALWAYS included from the first SDP offer!
       this.closeAllPeers();
 
       const joinRes = await emitAck<{
@@ -482,7 +499,7 @@ class VoiceManager {
       }>('voice:join', {
         token: this.voiceToken,
         micEnabled: true,
-        muted: false,
+        muted: startMuted,
       });
 
       if (!joinRes.ok) {
@@ -494,7 +511,6 @@ class VoiceManager {
       this.cb.onStatus('connected');
       this.refreshTransportState();
 
-      // Send fresh offers to all existing voice peers in the room
       for (const peer of joinRes.peers ?? []) {
         if (peer.userId === this.myUserId) continue;
         const entry = this.getOrCreatePeer(peer.userId);
@@ -528,7 +544,7 @@ class VoiceManager {
       }
       this.selfTestAudio.srcObject = this.localStream;
       this.selfTestAudio.muted = false;
-      this.selfTestAudio.volume = 0.85;
+      this.selfTestAudio.volume = 0.7;
       this.selfTestAudio.play().catch(() => {});
       return true;
     }
@@ -619,7 +635,7 @@ class VoiceManager {
   public setSpeakerEnabled(enabled: boolean): void {
     this.speakerEnabled = enabled;
     if (this.playbackGain && this.playbackCtx) {
-      this.playbackGain.gain.setTargetAtTime(enabled ? 1.15 : 0.0, this.playbackCtx.currentTime, 0.02);
+      this.playbackGain.gain.setTargetAtTime(enabled ? 0.9 : 0.0, this.playbackCtx.currentTime, 0.02);
     }
     for (const audio of this.remoteAudios.values()) {
       audio.muted = !enabled;
@@ -695,10 +711,6 @@ class VoiceManager {
     }
   }
 
-  /**
-   * Captures mic volume AND streams compact 16kHz Int16 chunks over Socket.IO
-   * to any room member who does NOT already have a confirmed playing WebRTC audio track.
-   */
   private startCaptureAndMonitor(stream: MediaStream): void {
     try {
       const AudioCtx =
@@ -711,12 +723,13 @@ class VoiceManager {
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.7;
+      analyser.smoothingTimeConstant = 0.72;
       source.connect(analyser);
 
+      // Emergency relay processor — ONLY emits packets if a peer's WebRTC/TURN failed or timed out (>6s)!
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       const silentGain = ctx.createGain();
-      silentGain.gain.value = 0.00001; // non-zero keeps Chrome audio graph active without audible bleed
+      silentGain.gain.value = 0.00001;
 
       source.connect(processor);
       processor.connect(silentGain);
@@ -724,30 +737,30 @@ class VoiceManager {
 
       processor.onaudioprocess = (evt) => {
         if (!this.micEnabled || this.muted || !this.voiceToken) return;
+        // Skip relay completely whenever WebRTC + TURN is healthy or connecting!
+        if (!this.shouldSendAnyRelay()) return;
         const sock = getSocket();
         if (!sock?.connected) return;
 
         const input = evt.inputBuffer.getChannelData(0);
-        // Gentle noise gate (0.002 catches even quiet laptop/phone mics!)
         let sumSq = 0;
         for (let i = 0; i < input.length; i += 4) {
           sumSq += input[i] * input[i];
         }
         const rms = Math.sqrt(sumSq / (input.length / 4));
         const now = Date.now();
-        if (rms > 0.002) {
-          this.speakingHoldUntil = Math.max(this.speakingHoldUntil, now + 600);
+        if (rms > 0.004) {
+          this.speakingHoldUntil = Math.max(this.speakingHoldUntil, now + 500);
         }
         if (now > this.speakingHoldUntil) return;
 
         const pcm = downsampleToInt16(input, ctx.sampleRate);
-        // Send relay to everyone EXCEPT peers who already confirmed live WebRTC audio!
-        const confirmedP2P = this.getConfirmedP2PPeerIds();
-        sock.emit('voice:relay_audio', {
+        const excluded = this.getPeersExcludedFromRelay();
+        sock.volatile.emit('voice:relay_audio', {
           token: this.voiceToken,
           sampleRate: TARGET_SAMPLE_RATE,
           pcm: pcm.buffer,
-          excludeUserIds: confirmedP2P,
+          excludeUserIds: excluded,
         });
       };
 
@@ -773,10 +786,10 @@ class VoiceManager {
           sumSq += norm * norm;
         }
         const rms = Math.sqrt(sumSq / data.length);
-        const level = Math.min(100, Math.round(rms * 460));
+        const level = Math.min(100, Math.round(rms * 440));
         const now = Date.now();
-        if (level > 6) {
-          this.speakingHoldUntil = Math.max(this.speakingHoldUntil, now + 500);
+        if (level > 8) {
+          this.speakingHoldUntil = Math.max(this.speakingHoldUntil, now + 450);
         }
         const speakingNow = now < this.speakingHoldUntil;
 
@@ -815,12 +828,11 @@ class VoiceManager {
       makingOffer: false,
       ignoreOffer: false,
       polite,
+      createdAt: Date.now(),
       hasLiveRemoteAudio: false,
     };
     this.peers.set(targetUserId, entry);
 
-    // Only attach local tracks if we have mic ON.
-    // NEVER pre-add a recvonly transceiver here (avoids SDP m-line mismatch on answerers!).
     if (this.localStream) {
       for (const track of this.localStream.getAudioTracks()) {
         pc.addTrack(track, this.localStream);
@@ -853,17 +865,13 @@ class VoiceManager {
       }
       audio.srcObject = remoteStream;
       audio.muted = !this.speakerEnabled;
-      audio.volume = 1.0;
+      audio.volume = 0.9;
 
-      const markLive = () => {
-        entry.hasLiveRemoteAudio = track.readyState === 'live' && !track.muted;
-        this.refreshTransportState();
-      };
-      track.onunmute = markLive;
-      track.onmute = () => {
-        entry.hasLiveRemoteAudio = false;
-        this.refreshTransportState();
-      };
+      // Mark live immediately so relay never overlaps WebRTC audio!
+      entry.hasLiveRemoteAudio = true;
+      this.pulseReceivingAudio();
+      this.refreshTransportState();
+
       track.onended = () => {
         entry.hasLiveRemoteAudio = false;
         this.refreshTransportState();
@@ -874,12 +882,11 @@ class VoiceManager {
         playPromise
           .then(() => {
             this.cb.onAutoplayBlocked(false);
-            markLive();
+            entry.hasLiveRemoteAudio = true;
+            this.refreshTransportState();
           })
           .catch(() => {
             this.cb.onAutoplayBlocked(true);
-            entry.hasLiveRemoteAudio = false;
-            this.refreshTransportState();
           });
       }
     };
@@ -902,7 +909,6 @@ class VoiceManager {
     if (!this.voiceToken || entry.makingOffer) return;
     try {
       entry.makingOffer = true;
-      // Add recvonly transceiver ONLY when initiating an offer with no local mic track
       if (!this.localStream && entry.pc.getTransceivers().length === 0) {
         entry.pc.addTransceiver('audio', { direction: 'recvonly' });
       }
