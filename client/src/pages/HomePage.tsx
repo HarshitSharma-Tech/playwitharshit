@@ -404,7 +404,7 @@ export const HomePage: React.FC = () => {
             {
               title: 'Host a Velvet Table',
               tag: 'PRIVATE ROOMS · LIVE MIC',
-              image: '/images/avatar-shark.jpg',
+              image: '/images/hero-speakeasy.jpg',
               desc: '1 or 2 decks (52 or 104 cards), custom cards per player, riffle shuffling, live WebRTC voice chat, and room codes for your crew.',
               Icon: Users,
               accent: 'text-[#E6B84C]',
@@ -413,9 +413,9 @@ export const HomePage: React.FC = () => {
             },
             {
               title: 'Catch Liars Red-Handed',
-              tag: 'HINDI MEMES · DESI ROASTS',
-              image: '/images/meme-caught.jpg',
-              desc: 'Call BLUFF to trigger 3D card reveals, iconic Hera Pheri & Panchayat live chat memes, and watch the liar absorb the entire pile.',
+              tag: 'REAL MEMES · DESI ROASTS',
+              image: 'https://i.imgflip.com/3lmzyx.jpg',
+              desc: 'Call BLUFF to trigger 3D card reveals, real iconic meme popups in live chat, and watch the liar absorb the entire pile.',
               Icon: Flame,
               accent: 'text-[#E1384B]',
               actionLabel: 'Battle AI Bots Now',
@@ -424,7 +424,7 @@ export const HomePage: React.FC = () => {
             {
               title: 'Rule the Hall of Fame',
               tag: 'ASLI KHILADI RANKINGS',
-              image: '/images/meme-boss.jpg',
+              image: 'https://i.imgflip.com/39t1o.jpg',
               desc: 'Track your Observed Bluff Meter, earn Master Deceiver & Perfect Detective badges, and climb global & weekly leaderboards.',
               Icon: Crown,
               accent: 'text-emerald-400',

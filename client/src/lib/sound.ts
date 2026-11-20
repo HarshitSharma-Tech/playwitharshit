@@ -9,6 +9,9 @@ type SoundKey =
   | 'bluffCaught'
   | 'truthConfirmed'
   | 'voicePhrase'
+  | 'voiceJoin'
+  | 'voiceLeave'
+  | 'voiceMute'
   | 'win'
   | 'loss'
   | 'click';
@@ -119,6 +122,17 @@ class SoundEngine {
         break;
       case 'voicePhrase':
         this.playTone(540, 0.07, 'sine', 0.1, 0, 720);
+        break;
+      case 'voiceJoin':
+        this.playTone(480, 0.08, 'sine', 0.11, 0);
+        this.playTone(720, 0.12, 'sine', 0.12, 0.07);
+        break;
+      case 'voiceLeave':
+        this.playTone(520, 0.08, 'sine', 0.1, 0);
+        this.playTone(340, 0.12, 'sine', 0.1, 0.07);
+        break;
+      case 'voiceMute':
+        this.playTone(390, 0.06, 'triangle', 0.09, 0, 310);
         break;
       case 'playerJoin':
         this.playTone(440, 0.12, 'sine', 0.12, 0);

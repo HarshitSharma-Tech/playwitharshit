@@ -14,7 +14,7 @@ export const ChallengeRevealOverlay: React.FC<ChallengeRevealOverlayProps> = ({ 
   const meme = isBluff
     ? pickMemeLine(BLUFF_CAUGHT_MEMES, result.timestamp)
     : pickMemeLine(TRUTH_CONFIRMED_MEMES, result.timestamp);
-  const memeImage = isBluff ? '/images/meme-caught.jpg' : '/images/meme-boss.jpg';
+  const memeImage = meme.image;
 
   return (
     <motion.div

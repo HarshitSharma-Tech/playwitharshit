@@ -1101,10 +1101,14 @@ export class RoomManager {
     const text = String(payload?.text ?? '').trim().slice(0, 220);
     if (!text) return { ok: false, error: 'Message cannot be empty.' };
 
-    // Only allow safe local /images/ paths for meme thumbnails
+    // Allow safe local /images/ paths or verified Imgflip real meme CDN URLs
     const safeMemeImage =
-      typeof payload.memeImage === 'string' && payload.memeImage.startsWith('/images/')
-        ? payload.memeImage.slice(0, 80)
+      typeof payload.memeImage === 'string' &&
+      (payload.memeImage.startsWith('/images/') ||
+        /^https:\/\/i\.imgflip\.com\/[a-zA-Z0-9_-]+\.(jpg|jpeg|png|gif|webp)$/.test(
+          payload.memeImage
+        ))
+        ? payload.memeImage.slice(0, 120)
         : undefined;
 
     const msg: ChatMessage = {

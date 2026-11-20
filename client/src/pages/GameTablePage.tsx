@@ -175,9 +175,18 @@ export const GameTablePage: React.FC = () => {
     selectedCards.length > 0 &&
     selectedCards.some((c) => c.rank !== gameState.requiredRank);
 
+  const vibrateTap = (ms = 14) => {
+    try {
+      navigator.vibrate?.(ms);
+    } catch {
+      // ignore unsupported browsers
+    }
+  };
+
   const toggleCardSelection = (cardId: string) => {
     if (!isMyTurn) return;
     soundEngine.play('cardSelect');
+    vibrateTap(12);
     setSelectedIds((prev) => {
       if (prev.includes(cardId)) return prev.filter((id) => id !== cardId);
       if (prev.length >= maxSelectableCards) {
@@ -193,6 +202,7 @@ export const GameTablePage: React.FC = () => {
 
   const handlePlaySelected = async () => {
     if (!isMyTurn || selectedIds.length === 0 || submitting) return;
+    vibrateTap(22);
     setSubmitting(true);
     try {
       await playCards(selectedIds);
@@ -214,7 +224,7 @@ export const GameTablePage: React.FC = () => {
   const rankWord = RANK_NAMES[gameState.requiredRank] ?? gameState.requiredRank;
 
   return (
-    <div className="relative flex min-h-screen flex-col justify-between bg-[#0B0907] overflow-hidden">
+    <div className="relative flex min-h-[100dvh] flex-col justify-between bg-[#0B0907] overflow-hidden touch-manipulation">
       {/* Subtle warm chandelier ambient spotlight over room */}
       <div
         className="pointer-events-none absolute top-0 left-1/2 h-[420px] w-[780px] -translate-x-1/2 rounded-full opacity-20 blur-3xl"
@@ -348,9 +358,9 @@ export const GameTablePage: React.FC = () => {
       </header>
 
       {/* CENTER ROYAL EMERALD CASINO TABLE */}
-      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col items-center justify-center px-4 py-5 sm:px-6">
-        {/* Opponents Seated Around Top Arc */}
-        <div className="z-20 mb-5 flex w-full flex-wrap items-start justify-center gap-3 sm:gap-5">
+      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col items-center justify-center px-3 py-3 sm:px-6 sm:py-5">
+        {/* Opponents Row: compact horizontal scroll on mobile so table + hand always fit cleanly! */}
+        <div className="z-20 mb-3 sm:mb-5 flex w-full flex-nowrap sm:flex-wrap items-start justify-start sm:justify-center gap-2.5 sm:gap-5 overflow-x-auto sm:overflow-visible pb-2 px-1">
           {orderedOpponents.map((opp) => {
             const latestRx = [...reactions].reverse().find((r) => r.playerId === opp.id);
             const vp = voicePeers.find((peer) => peer.userId === opp.id);
@@ -568,8 +578,8 @@ export const GameTablePage: React.FC = () => {
         </AnimatePresence>
       </main>
 
-      {/* BOTTOM WALNUT CONSOLE & CURVED HAND FAN */}
-      <section className="z-20 border-t border-[#E6B84C]/20 bg-[#120E0B]/95 backdrop-blur-xl px-3 pb-16 sm:pb-5 pt-3 sm:px-6">
+      {/* BOTTOM WALNUT CONSOLE & CURVED HAND FAN (mobile safe-area clearance above floating Chat & Voice pills) */}
+      <section className="z-20 border-t border-[#E6B84C]/20 bg-[#120E0B]/95 backdrop-blur-xl px-3 pb-20 sm:pb-6 pt-3 sm:px-6">
         <div className="mx-auto max-w-6xl">
           {/* Action Bar Row */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

@@ -68,7 +68,7 @@ export const WinnerModal: React.FC<WinnerModalProps> = ({
             className="mx-auto mb-4 h-28 w-28 overflow-hidden rounded-3xl border-2 border-amber-400 shadow-[0_0_40px_rgba(251,191,36,0.35)]"
           >
             <img
-              src="/images/meme-boss.jpg"
+              src="https://i.imgflip.com/39t1o.jpg"
               alt="Asli Khiladi Winner"
               className="h-full w-full object-cover"
             />

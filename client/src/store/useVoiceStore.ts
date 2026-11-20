@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { VoicePeerState } from '@shared/types';
 import { voiceManager, type VoiceTransportMode } from '../lib/voice';
+import { soundEngine } from '../lib/sound';
 
 export type VoiceConnectionStatus =
   | 'idle'
@@ -16,6 +17,7 @@ interface VoiceStoreState {
   muted: boolean;
   pushToTalk: boolean;
   speakerEnabled: boolean;
+  speakerVolume: number;
   speaking: boolean;
   micLevel: number;
   connectedAudioPeers: number;
@@ -34,6 +36,7 @@ interface VoiceStoreState {
   setMuted: (muted: boolean) => void;
   togglePushToTalk: () => void;
   toggleSpeaker: () => void;
+  setSpeakerVolume: (vol: number) => void;
   toggleSelfTest: () => void;
   unlockAudio: () => void;
   clearError: () => void;
@@ -58,6 +61,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     muted: false,
     pushToTalk: false,
     speakerEnabled: true,
+    speakerVolume: 0.9,
     speaking: false,
     micLevel: 0,
     connectedAudioPeers: 0,
@@ -87,17 +91,20 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     },
 
     enableMic: async (userId, roomCode) => {
-      await voiceManager.enableMicrophone(userId, roomCode);
+      const ok = await voiceManager.enableMicrophone(userId, roomCode);
+      if (ok) soundEngine.play('voiceJoin');
     },
 
     disableMic: async () => {
       set({ selfTesting: false });
+      soundEngine.play('voiceLeave');
       await voiceManager.disconnectVoice();
     },
 
     toggleMute: () => {
       const { micEnabled, muted } = get();
       if (!micEnabled) return;
+      soundEngine.play('voiceMute');
       voiceManager.setMuted(!muted);
     },
 
@@ -119,6 +126,12 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
       const next = !get().speakerEnabled;
       voiceManager.setSpeakerEnabled(next);
       set({ speakerEnabled: next });
+    },
+
+    setSpeakerVolume: (vol) => {
+      const clamped = Math.max(0, Math.min(1, vol));
+      voiceManager.setSpeakerVolume(clamped);
+      set({ speakerVolume: clamped });
     },
 
     toggleSelfTest: () => {

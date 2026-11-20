@@ -92,6 +92,7 @@ class VoiceManager {
   private myUserId: string | null = null;
   private activeRoomCode: string | null = null;
   private speakerEnabled = true;
+  private speakerVolume = 0.9;
   private micEnabled = false;
   private muted = false;
   private listeningJoined = false;
@@ -635,16 +636,35 @@ class VoiceManager {
   public setSpeakerEnabled(enabled: boolean): void {
     this.speakerEnabled = enabled;
     if (this.playbackGain && this.playbackCtx) {
-      this.playbackGain.gain.setTargetAtTime(enabled ? 0.9 : 0.0, this.playbackCtx.currentTime, 0.02);
+      this.playbackGain.gain.setTargetAtTime(
+        enabled ? this.speakerVolume : 0.0,
+        this.playbackCtx.currentTime,
+        0.02
+      );
     }
     for (const audio of this.remoteAudios.values()) {
       audio.muted = !enabled;
+      audio.volume = this.speakerVolume;
       if (enabled) {
         audio.play().catch(() => this.cb.onAutoplayBlocked(true));
       }
     }
     if (enabled) {
       this.unlockRemoteAudioPlayback();
+    }
+  }
+
+  public setSpeakerVolume(vol: number): void {
+    this.speakerVolume = Math.max(0, Math.min(1, vol));
+    if (this.playbackGain && this.playbackCtx && this.speakerEnabled) {
+      this.playbackGain.gain.setTargetAtTime(
+        this.speakerVolume,
+        this.playbackCtx.currentTime,
+        0.02
+      );
+    }
+    for (const audio of this.remoteAudios.values()) {
+      audio.volume = this.speakerVolume;
     }
   }
 
