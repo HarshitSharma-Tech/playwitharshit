@@ -280,7 +280,7 @@ export const GameTablePage: React.FC = () => {
   };
 
   const handleCopyCode = async () => {
-    await navigator.clipboard.writeText(gameState.roomCode).catch(() => {});
+    await navigator.clipboard.writeText(gameState.roomCode).catch(() => { });
     pushToast({ type: 'success', message: `Room code ${gameState.roomCode} copied!` });
   };
 
@@ -349,24 +349,21 @@ export const GameTablePage: React.FC = () => {
 
             <div className="flex items-center gap-2 rounded-xl bg-[#1C140F] border border-[#E6B84C]/20 px-3 py-1.5">
               <Clock
-                className={`h-3.5 w-3.5 ${
-                  !isDealingStage && remainingSec <= 5
-                    ? 'text-[#E1384B] animate-pulse'
-                    : 'text-[#E6B84C]'
-                }`}
+                className={`h-3.5 w-3.5 ${!isDealingStage && remainingSec <= 5
+                  ? 'text-[#E1384B] animate-pulse'
+                  : 'text-[#E6B84C]'
+                  }`}
               />
               <span
-                className={`font-[var(--font-mono)] text-xs font-bold w-7 text-right ${
-                  !isDealingStage && remainingSec <= 5 ? 'text-[#E1384B]' : 'text-[#FAF3E3]'
-                }`}
+                className={`font-[var(--font-mono)] text-xs font-bold w-7 text-right ${!isDealingStage && remainingSec <= 5 ? 'text-[#E1384B]' : 'text-[#FAF3E3]'
+                  }`}
               >
                 {isDealingStage ? '--' : `${remainingSec}s`}
               </span>
               <div className="hidden sm:block h-1.5 w-16 overflow-hidden rounded-full bg-[#0B0907]">
                 <div
-                  className={`h-full transition-all duration-200 ${
-                    !isDealingStage && remainingSec <= 5 ? 'bg-[#E1384B]' : 'bg-[#E6B84C]'
-                  }`}
+                  className={`h-full transition-all duration-200 ${!isDealingStage && remainingSec <= 5 ? 'bg-[#E1384B]' : 'bg-[#E6B84C]'
+                    }`}
                   style={{ width: `${timerPercent}%` }}
                 />
               </div>
@@ -379,11 +376,10 @@ export const GameTablePage: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowLog(!showLog)}
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border transition cursor-pointer ${
-                showLog
-                  ? 'bg-[#E6B84C]/20 border-[#E6B84C] text-[#F6D889]'
-                  : 'bg-[#1C140F] border-[#E6B84C]/18 text-[#B9A992] hover:text-[#FAF3E3]'
-              }`}
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border transition cursor-pointer ${showLog
+                ? 'bg-[#E6B84C]/20 border-[#E6B84C] text-[#F6D889]'
+                : 'bg-[#1C140F] border-[#E6B84C]/18 text-[#B9A992] hover:text-[#FAF3E3]'
+                }`}
               title="Toggle table log"
             >
               <ScrollText className="h-4 w-4" />
@@ -493,22 +489,20 @@ export const GameTablePage: React.FC = () => {
               <div className="z-10 mb-5">
                 {gameState.phase === 'playing' && (
                   <div
-                    className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-[var(--font-mono)] text-[11px] sm:text-xs font-bold uppercase tracking-wider border shadow-lg text-center ${
-                      isMyTurn
-                        ? gameState.pendingWinnerId
-                          ? 'bg-[#3A0E16]/95 border-[#E1384B] text-[#FFC4CB]'
-                          : 'bg-[#1F160B]/95 border-[#E6B84C] text-[#F6D889]'
-                        : 'bg-[#091F16]/90 border-[#E6B84C]/30 text-[#D7E6DD]'
-                    }`}
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-[var(--font-mono)] text-[11px] sm:text-xs font-bold uppercase tracking-wider border shadow-lg text-center ${isMyTurn
+                      ? gameState.pendingWinnerId
+                        ? 'bg-[#3A0E16]/95 border-[#E1384B] text-[#FFC4CB]'
+                        : 'bg-[#1F160B]/95 border-[#E6B84C] text-[#F6D889]'
+                      : 'bg-[#091F16]/90 border-[#E6B84C]/30 text-[#D7E6DD]'
+                      }`}
                   >
                     <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${
-                        isMyTurn
-                          ? gameState.pendingWinnerId
-                            ? 'bg-[#E1384B] animate-ping'
-                            : 'bg-[#E6B84C] animate-ping'
-                          : 'bg-emerald-400'
-                      }`}
+                      className={`h-2 w-2 shrink-0 rounded-full ${isMyTurn
+                        ? gameState.pendingWinnerId
+                          ? 'bg-[#E1384B] animate-ping'
+                          : 'bg-[#E6B84C] animate-ping'
+                        : 'bg-emerald-400'
+                        }`}
                     />
                     {isMyTurn
                       ? isFreshRound
@@ -633,15 +627,14 @@ export const GameTablePage: React.FC = () => {
                 {[...gameState.logs].reverse().map((entry) => (
                   <div
                     key={entry.id}
-                    className={`rounded-lg px-2.5 py-2 leading-relaxed ${
-                      entry.type === 'challenge_bluff'
-                        ? 'bg-[#E1384B]/18 text-[#FFC4CB]'
-                        : entry.type === 'challenge_truth'
-                          ? 'bg-emerald-500/15 text-emerald-300'
-                          : entry.type === 'win'
-                            ? 'bg-[#E6B84C]/20 text-[#F6D889]'
-                            : 'bg-[#0F0B09]/90 text-[#D0C2AE]'
-                    }`}
+                    className={`rounded-lg px-2.5 py-2 leading-relaxed ${entry.type === 'challenge_bluff'
+                      ? 'bg-[#E1384B]/18 text-[#FFC4CB]'
+                      : entry.type === 'challenge_truth'
+                        ? 'bg-emerald-500/15 text-emerald-300'
+                        : entry.type === 'win'
+                          ? 'bg-[#E6B84C]/20 text-[#F6D889]'
+                          : 'bg-[#0F0B09]/90 text-[#D0C2AE]'
+                      }`}
                   >
                     {entry.message}
                   </div>
@@ -660,11 +653,10 @@ export const GameTablePage: React.FC = () => {
             {/* Left: My Bluff Meter & Match Reputation */}
             {me ? (
               <div
-                className={`relative flex items-center gap-3 rounded-xl px-3.5 py-2 border transition ${
-                  myVoiceSpeaking && myVoiceMicEnabled && !myVoiceMuted
-                    ? 'bg-[#10261D] border-emerald-400/70'
-                    : 'bg-[#1A1410] border-[#E6B84C]/20'
-                }`}
+                className={`relative flex items-center gap-3 rounded-xl px-3.5 py-2 border transition ${myVoiceSpeaking && myVoiceMicEnabled && !myVoiceMuted
+                  ? 'bg-[#10261D] border-emerald-400/70'
+                  : 'bg-[#1A1410] border-[#E6B84C]/20'
+                  }`}
               >
                 <AnimatePresence>
                   {myLatestReaction && (
@@ -673,11 +665,10 @@ export const GameTablePage: React.FC = () => {
                       initial={{ opacity: 0, y: 6, scale: 0.65 }}
                       animate={{ opacity: 1, y: -34, scale: 1 }}
                       exit={{ opacity: 0, y: -44 }}
-                      className={`pointer-events-none absolute -top-2 left-2 z-30 shadow-xl whitespace-nowrap ${
-                        myLatestReaction.phrase
-                          ? 'rounded-xl bg-[#1D1510] border border-[#E6B84C]/70 px-3 py-1 text-xs font-bold text-[#FAF3E3]'
-                          : 'text-2xl'
-                      }`}
+                      className={`pointer-events-none absolute -top-2 left-2 z-30 shadow-xl whitespace-nowrap ${myLatestReaction.phrase
+                        ? 'rounded-xl bg-[#1D1510] border border-[#E6B84C]/70 px-3 py-1 text-xs font-bold text-[#FAF3E3]'
+                        : 'text-2xl'
+                        }`}
                     >
                       {myLatestReaction.phrase
                         ? `“${myLatestReaction.phrase}”`
@@ -698,11 +689,10 @@ export const GameTablePage: React.FC = () => {
                         <MicOff className="h-3 w-3 text-[#FF9BA6]" />
                       ) : (
                         <Mic
-                          className={`h-3 w-3 ${
-                            myVoiceSpeaking
-                              ? 'text-emerald-400 animate-pulse'
-                              : 'text-emerald-400/80'
-                          }`}
+                          className={`h-3 w-3 ${myVoiceSpeaking
+                            ? 'text-emerald-400 animate-pulse'
+                            : 'text-emerald-400/80'
+                            }`}
                         />
                       ))}
                   </div>
@@ -742,13 +732,12 @@ export const GameTablePage: React.FC = () => {
                             vibrateTap(10);
                             setDeclaredRank(r);
                           }}
-                          className={`relative flex h-8 min-w-[30px] sm:min-w-[32px] items-center justify-center rounded-lg px-1.5 font-[var(--font-mono)] text-xs font-extrabold transition cursor-pointer ${
-                            active
-                              ? 'bg-gradient-to-b from-[#F5D582] to-[#C89428] text-[#140E08] shadow-[0_0_12px_rgba(230,184,76,0.5)] scale-105'
-                              : inHand
-                                ? 'bg-[#261D15] border border-[#E6B84C]/40 text-[#FAF3E3] hover:border-[#E6B84C]'
-                                : 'bg-[#140F0C] border border-white/10 text-[#968674] hover:text-[#FAF3E3] hover:border-white/25'
-                          }`}
+                          className={`relative flex h-8 min-w-[30px] sm:min-w-[32px] items-center justify-center rounded-lg px-1.5 font-[var(--font-mono)] text-xs font-extrabold transition cursor-pointer ${active
+                            ? 'bg-gradient-to-b from-[#F5D582] to-[#C89428] text-[#140E08] shadow-[0_0_12px_rgba(230,184,76,0.5)] scale-105'
+                            : inHand
+                              ? 'bg-[#261D15] border border-[#E6B84C]/40 text-[#FAF3E3] hover:border-[#E6B84C]'
+                              : 'bg-[#140F0C] border border-white/10 text-[#968674] hover:text-[#FAF3E3] hover:border-white/25'
+                            }`}
                           title={
                             inHand
                               ? `Declare ${RANK_NAMES[r]} (you have this rank)`
@@ -783,9 +772,8 @@ export const GameTablePage: React.FC = () => {
                       type="button"
                       disabled={selectedIds.length === 0 || submitting}
                       onClick={handlePlaySelected}
-                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-extrabold uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer ${
-                        selectionIsBluff ? 'crimson-btn' : 'gold-btn'
-                      }`}
+                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-extrabold uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer ${selectionIsBluff ? 'crimson-btn' : 'gold-btn'
+                        }`}
                     >
                       <Send className="h-3.5 w-3.5" />
                       {selectedIds.length === 0
@@ -815,10 +803,10 @@ export const GameTablePage: React.FC = () => {
                       disabled={submitting}
                       onClick={handleChallengePlay}
                       className="crimson-btn flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-extrabold uppercase tracking-wider transition hover:-translate-y-0.5 disabled:opacity-40 cursor-pointer"
-                      title={`Reveal ${gameState.lastPlay?.playerName ?? 'previous'}'s hidden cards`}
+                      title={`Catch ${gameState.lastPlay?.playerName ?? 'previous player'}'s lie by revealing their cards`}
                     >
                       <ShieldAlert className="h-4 w-4" />
-                      Call Bluff
+                      Catch Lie (Bluff!)
                     </button>
                   </>
                 )}
