@@ -146,6 +146,10 @@ function attachSocketListeners(
 
   socket.on('room:state', (lobby: LobbyState) => {
     const prev = get().lobby;
+    const myId = get().user?.id;
+    if (myId && lobby?.code) {
+      useVoiceStore.getState().prepareRoom(myId, lobby.code);
+    }
     if (prev && lobby.players.length > prev.players.length) {
       soundEngine.play('playerJoin');
     }

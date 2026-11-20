@@ -20,10 +20,12 @@ interface VoiceStoreState {
   connectedAudioPeers: number;
   transportMode: VoiceTransportMode;
   autoplayBlocked: boolean;
+  receivingAudio: boolean;
   selfTesting: boolean;
   error: string | null;
   peers: VoicePeerState[];
 
+  prepareRoom: (userId: string, roomCode: string) => void;
   setPeers: (peers: VoicePeerState[], myUserId?: string, roomCode?: string) => void;
   enableMic: (userId: string, roomCode: string) => Promise<void>;
   disableMic: () => Promise<void>;
@@ -44,6 +46,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     onConnectedPeers: (connectedAudioPeers) => set({ connectedAudioPeers }),
     onTransportMode: (transportMode) => set({ transportMode }),
     onAutoplayBlocked: (autoplayBlocked) => set({ autoplayBlocked }),
+    onReceivingAudio: (receivingAudio) => set({ receivingAudio }),
   });
 
   return {
@@ -56,9 +59,14 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
     connectedAudioPeers: 0,
     transportMode: 'none',
     autoplayBlocked: false,
+    receivingAudio: false,
     selfTesting: false,
     error: null,
     peers: [],
+
+    prepareRoom: (userId, roomCode) => {
+      voiceManager.prepareRoomListener(userId, roomCode);
+    },
 
     setPeers: (peers, myUserId, roomCode) => {
       set({ peers });
@@ -119,6 +127,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => {
         connectedAudioPeers: 0,
         transportMode: 'none',
         autoplayBlocked: false,
+        receivingAudio: false,
         selfTesting: false,
         error: null,
         peers: [],

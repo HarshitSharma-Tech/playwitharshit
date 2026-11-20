@@ -32,6 +32,7 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
     connectedAudioPeers,
     transportMode,
     autoplayBlocked,
+    receivingAudio,
     selfTesting,
     error,
     peers,
@@ -218,11 +219,17 @@ export const VoiceControlPanel: React.FC<VoiceControlPanelProps> = ({ roomCode, 
                 })}
               </div>
             ) : (
-              <span className="flex items-center gap-1 font-[var(--font-mono)] text-[9px] text-[#7D859F]">
-                <Radio className="h-2.5 w-2.5 text-[#1CD696]" />
-                {speakingPeers.length > 0
-                  ? `${speakingPeers[0].username} speaking`
-                  : `${activeSpeakersCount} in voice`}
+              <span className="flex items-center gap-1 font-[var(--font-mono)] text-[9px] text-[#B9A992]">
+                <Radio
+                  className={`h-2.5 w-2.5 ${
+                    receivingAudio ? 'text-emerald-400 animate-ping' : 'text-[#1CD696]'
+                  }`}
+                />
+                {receivingAudio
+                  ? 'HEARING AUDIO'
+                  : speakingPeers.length > 0
+                    ? `${speakingPeers[0].username} speaking`
+                    : `${activeSpeakersCount} in voice`}
               </span>
             )}
           </div>
